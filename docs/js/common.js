@@ -122,6 +122,9 @@ export function renderBlocks(blocks, exOpts, numPrefix = "") {
     if (b.type === "html") return `<div class="block-html">${b.html}</div>`;
     if (b.type === "teacher-note") return `<div class="tnote"><div class="tn-h"><span class="tn-ic">T</span>Teaching notes</div><div class="tn-b">${b.html}</div></div>`;
     if (b.type === "flashcards") return renderFlashcards(b);
+    if (b.type === "image") return renderImages([b], b.layout);
+    if (b.type === "images") return renderImages(b.items || [], b.layout || "grid");
+    if (b.type === "audio") return renderAudio(b);
     if (b.type === "exercise") { n += 1; return renderExercise(b, { num: numPrefix ? `${numPrefix}.${n}` : String(n), ...exOpts(b) }); }
     return "";
   }).join("\n");
@@ -358,4 +361,24 @@ export function wireFlashcards(root = document) {
     if (e.key === "ArrowRight") { e.preventDefault(); go(fc, 1); fc.querySelector(".fc-card")?.focus(); }
     if (e.key === "ArrowLeft") { e.preventDefault(); go(fc, -1); fc.querySelector(".fc-card")?.focus(); }
   });
+}
+
+// ---------------------------------------------------------------------
+//  Pictures and audio. Files live on GitHub Pages in docs/media/…,
+//  the unit only stores the path, e.g. "media/u1/listening-1.mp3".
+// ---------------------------------------------------------------------
+const mediaSrc = (src) => esc(String(src || "").replace(/^\/+/, ""));
+function renderImages(items, layout) {
+  const figs = items.map((it) => `<figure class="pic">
+      <img src="${mediaSrc(it.src)}" alt="${esc(it.alt || it.caption || "")}" loading="lazy" draggable="false">
+      ${it.caption || it.label ? `<figcaption class="cap">${it.label ? `<b>${esc(it.label)}</b>` : ""}${it.caption ? esc(it.caption) : ""}</figcaption>` : ""}
+    </figure>`).join("");
+  return `<div class="pics ${items.length > 1 ? (layout === "row" ? "row" : "grid") : "one"}">${figs}</div>`;
+}
+function renderAudio(b) {
+  return `<div class="audio"><div class="au-ic">🎧</div><div class="au-b">
+      <div class="au-t">${esc(b.title || "Listen")}</div>
+      <audio controls preload="none" controlslist="nodownload noplaybackrate" src="${mediaSrc(b.src)}"></audio>
+      ${b.note ? `<div class="au-n">${esc(b.note)}</div>` : ""}
+    </div></div>`;
 }
