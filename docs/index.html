@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Course</title>
+<link rel="stylesheet" href="css/course.css">
+</head>
+<body>
+<div id="boot">Загрузка…</div>
+
+<div id="auth-screen" class="auth-wrap" hidden></div>
+
+<div id="app" class="shell" hidden>
+  <nav class="sidebar">
+    <div class="brand"><span data-course-title></span><small>Interactive course</small></div>
+    <div id="unit-nav"></div>
+    <div class="me">
+      <b id="me-name"></b><span id="me-email"></span><br>
+      Группа: <span id="me-group">—</span><br>
+      <button class="btn small ghost" id="logout">Выйти</button>
+    </div>
+  </nav>
+  <div class="main">
+    <div class="topbar"><div class="topbar-row"><div>
+      <div class="k" data-course-title></div>
+      <div class="t" id="topbar-title"></div>
+    </div></div></div>
+    <div class="wrap">
+      <div id="unit-bar"></div>
+      <div id="content"></div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/student.js"></script>
+</body></html>
