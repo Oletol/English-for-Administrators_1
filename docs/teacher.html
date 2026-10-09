@@ -1,37 +1,58 @@
 <!doctype html>
-<html lang="ru"><head><meta charset="utf-8">
+<html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Кабинет преподавателя</title>
+<title>Teacher's Edition</title>
 <link rel="stylesheet" href="css/course.css">
 </head>
-<body>
-<div id="boot">Загрузка…</div>
+<body class="teacher">
+<div id="boot">Loading…</div>
 <div id="auth-screen" class="auth-wrap" hidden></div>
 
+<div id="denied" class="auth-wrap" hidden><div class="auth-card">
+  <div class="crs">Teacher's Edition</div>
+  <h1>No teacher access</h1>
+  <p>This account is not registered as a teacher account. Teacher access is granted by the project owner in the Firebase console (the <code>teachers</code> collection).</p>
+  <p><a href="index.html">Go to the course</a> · <a href="#" id="logout2">Sign out</a></p>
+</div></div>
+
 <div id="app" hidden>
-  <div class="topbar"><div class="topbar-row">
-    <div>
-      <div class="k"><span data-course-title></span> · кабинет преподавателя</div>
-      <div class="ctx" style="margin-top:.4em">
-        <label>Группа <select id="ctx-group"></select></label>
-        <label>Юнит <select id="ctx-unit"></select></label>
+  <div class="scrim"></div>
+  <aside class="sb">
+    <div class="sb-top">
+      <div class="ttl">
+        <div class="crs" data-course-title></div>
+        <h1>Teacher's Edition</h1>
+      </div>
+      <button class="sb-hide" type="button" data-sb-toggle title="Hide the panel">«</button>
+    </div>
+    <nav class="sb-nav">
+      <div class="sb-label">Teaching tools</div>
+      <div id="tool-nav"></div>
+      <div class="sb-label">Units</div>
+      <div id="unit-nav"></div>
+    </nav>
+    <div class="sb-foot">
+      <div class="who"><b>Teacher</b><span id="me-email"></span></div>
+      <a href="index.html">Student view</a>
+      <button type="button" id="logout">Sign out</button>
+    </div>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <button class="burger" type="button" data-sb-toggle aria-label="Show or hide the panel" title="Show or hide the panel">&#9776;</button>
+      <div class="crumb" id="crumb"></div>
+      <span class="ed-badge">Teacher's edition</span>
+      <div class="sp"></div>
+      <div class="ctx">
+        <label>Group <select id="ctx-group"></select></label>
+        <label>Unit <select id="ctx-unit"></select></label>
       </div>
     </div>
-    <div class="ctx"><span id="me-email"></span><a class="btn small ghost" href="index.html">Вид студента</a><button class="btn small ghost" id="logout">Выйти</button></div>
-  </div></div>
-  <div class="tabs" id="tabs">
-    <button data-tab="access">Доступ и проверка</button>
-    <button data-tab="works">Работы студентов</button>
-    <button data-tab="stats">Аналитика</button>
-    <button data-tab="content">Контент и ключи</button>
-    <button data-tab="groups">Группы и студенты</button>
+    <div class="wrap" id="wrap"><div id="view"></div></div>
   </div>
-  <div class="wrap wide"><div id="view"></div></div>
 </div>
-<div id="denied" class="auth-wrap" hidden><div class="auth-card"><h1>Нет прав преподавателя</h1>
-  <p>Этот аккаунт не отмечен как преподавательский. Роль назначается владельцем проекта в консоли Firebase (коллекция <code>teachers</code>).</p>
-  <p><a href="index.html">Перейти к курсу</a> · <a href="#" id="logout2">Выйти</a></p></div></div>
 
 <script type="module" src="js/teacher.js"></script>
 </body></html>

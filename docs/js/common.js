@@ -14,7 +14,7 @@ export function norm(s) {
     .replace(/[.!?;,]+$/, "");
 }
 
-export const KIND_LABEL = { gap: "Fill in the gaps", match: "Matching", mcq: "Multiple choice", open: "Open answer" };
+export const KIND_LABEL = { gap: "Gap fill", match: "Matching", mcq: "Multiple choice", open: "Open answer" };
 export const isAuto = (ex) => ex.kind !== "open";
 
 export const subId = (unitId, uid) => `${unitId}__${uid}`;
@@ -96,11 +96,12 @@ export function buildResult({ sub, content, keys, manual = {}, showCorrect = tru
 //    grading: bool              — поля для выставления оценки (преподаватель)
 //  }
 // ---------------------------------------------------------------------
-export function renderBlocks(blocks, exOpts) {
+export function renderBlocks(blocks, exOpts, numPrefix = "") {
+  let n = 0;
   return (blocks || []).map((b) => {
     if (b.type === "html") return `<div class="block-html">${b.html}</div>`;
-    if (b.type === "teacher-note") return `<div class="panel tnote"><div class="panel-t">Teacher's note</div>${b.html}</div>`;
-    if (b.type === "exercise") return renderExercise(b, exOpts(b));
+    if (b.type === "teacher-note") return `<div class="tnote"><div class="tn-h"><span class="tn-ic">T</span>Teaching notes</div><div class="tn-b">${b.html}</div></div>`;
+    if (b.type === "exercise") { n += 1; return renderExercise(b, { num: numPrefix ? `${numPrefix}.${n}` : String(n), ...exOpts(b) }); }
     return "";
   }).join("\n");
 }
@@ -108,14 +109,13 @@ export function renderBlocks(blocks, exOpts) {
 export function renderExercise(ex, o = {}) {
   const a = o.answers || {};
   const dis = o.readOnly ? "disabled" : "";
-  let head = esc(ex.title || "");
   let scoreLine = "";
   if (o.auto && isAuto(ex)) {
     const vals = Object.values(o.auto);
     scoreLine = `<span class="ex-score">${vals.filter((v) => v.ok).length} / ${vals.length}</span>`;
   }
   const options = ex.kind === "match" && ex.showOptionList !== false
-    ? `<p class="opt-list">${(ex.options || []).map((op) => `<b>${esc(op.id)}.</b> ${op.text}`).join(" &middot; ")}</p>` : "";
+    ? `<div class="opt-list">${(ex.options || []).map((op) => `<b>${esc(op.id)}</b>&nbsp;${op.text}`).join(" &nbsp;&middot;&nbsp; ")}</div>` : "";
 
   const items = (ex.items || []).map((it) => {
     const val = a[it.id] ?? "";
@@ -133,14 +133,14 @@ export function renderExercise(ex, o = {}) {
     } else if (ex.kind === "match") {
       const opts = (ex.options || []).map((op) =>
         `<option value="${esc(op.id)}" ${val === op.id ? "selected" : ""}>${esc(op.id)}. ${esc(stripTags(op.text))}</option>`).join("");
-      body = `<span class="term">${it.text}</span> <select class="gap ${mark}" ${attrs}><option value="">—</option>${opts}</select>${corr}${keyHint}`;
+      body = `<span class="m-word">${it.text}</span> <select class="gap ${mark}" ${attrs}><option value="">choose…</option>${opts}</select>${corr}${keyHint}`;
     } else if (ex.kind === "mcq") {
       const name = `${ex.id}__${it.id}`;
       const letters = "ABCDEFGH";
       const opts = (it.options || []).map((t, i) => {
         const L = letters[i];
         const cls = r && val === L ? (r.ok ? "ok" : "bad") : (o.key && o.key[it.id] === L ? "right" : "");
-        return `<label class="${cls}"><input type="radio" name="${esc(name)}" value="${L}" ${val === L ? "checked" : ""} ${attrs}> ${L}&nbsp;${t}</label>`;
+        return `<label class="${cls}"><input type="radio" name="${esc(name)}" value="${L}" ${val === L ? "checked" : ""} ${attrs}><span class="l">${L}</span><span>${t}</span></label>`;
       }).join("");
       body = `${it.text}<div class="mcq">${opts}</div>${corr}`;
     } else if (ex.kind === "open") {
@@ -149,26 +149,26 @@ export function renderExercise(ex, o = {}) {
       let grade = "";
       if (o.grading) {
         grade = `<div class="grade-box">
-          <label>Балл <input type="number" min="0" max="${max}" step="0.5" class="g-score" data-ex="${esc(ex.id)}" data-item="${esc(it.id)}" value="${esc(m?.score ?? "")}"> / ${max}</label>
-          <textarea class="g-comment" rows="2" placeholder="Комментарий студенту" data-ex="${esc(ex.id)}" data-item="${esc(it.id)}">${esc(m?.comment ?? "")}</textarea>
+          <label>Score <input type="number" min="0" max="${max}" step="0.5" class="g-score" data-ex="${esc(ex.id)}" data-item="${esc(it.id)}" value="${esc(m?.score ?? "")}"> / ${max}</label>
+          <textarea class="g-comment" rows="2" placeholder="Comment for the student" data-ex="${esc(ex.id)}" data-item="${esc(it.id)}">${esc(m?.comment ?? "")}</textarea>
         </div>`;
       } else if (m && (m.score !== undefined || m.comment)) {
         grade = `<div class="feedback"><b>${m.score ?? "—"} / ${max}</b>${m.comment ? ` · ${esc(m.comment)}` : ""}</div>`;
       } else if (o.auto !== undefined && o.showPending) {
-        grade = `<div class="feedback muted">Ожидает проверки преподавателем</div>`;
+        grade = `<div class="feedback muted">Waiting for the teacher's assessment</div>`;
       }
-      body = `${it.text}<textarea class="open-answer" rows="${it.rows || 5}" ${attrs}>${esc(val)}</textarea>${grade}`;
+      body = `${it.text}<textarea class="open-answer" rows="${it.rows || 5}" ${attrs} placeholder="${o.readOnly ? "" : "Type your answer here…"}">${esc(val)}</textarea>${grade}`;
     }
     return `<li>${body}</li>`;
   }).join("\n");
 
-  return `<div class="exercise" id="ex-${esc(ex.id)}">
-  <div class="ex-h">${head} <span class="kind">${KIND_LABEL[ex.kind] || ""}</span>${scoreLine}</div>
-  <div class="ex-b">
-    ${ex.rubric ? `<p class="rubric">${ex.rubric}</p>` : ""}
-    ${options}
-    <ol class="nums">${items}</ol>
-  </div></div>`;
+  const count = (ex.items || []).length;
+  return `<section class="ex" id="ex-${esc(ex.id)}">
+  <div class="ex-h">${o.num ? `<span class="ex-n">${esc(o.num)}</span>` : ""}<span class="ex-t">${esc(ex.title || "")}</span><span class="ex-c">${KIND_LABEL[ex.kind] || ""} · ${count} ${count === 1 ? "item" : "items"}</span>${scoreLine}</div>
+  ${ex.rubric ? `<p class="ex-i">${ex.rubric}</p>` : ""}
+  ${options}
+  <ol class="items">${items}</ol>
+</section>`;
 }
 
 // Для matching показываем не только букву, но и текст варианта
@@ -189,41 +189,42 @@ export function readInput(el) {
 export function fmtTime(ts) {
   const d = ts?.toDate ? ts.toDate() : ts instanceof Date ? ts : null;
   if (!d) return "";
-  return d.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleString("en-GB", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
 export function friendlyError(e) {
   const c = e?.code || "";
   const map = {
-    "auth/invalid-credential": "Неверный email или пароль.",
-    "auth/wrong-password": "Неверный email или пароль.",
-    "auth/user-not-found": "Пользователь не найден.",
-    "auth/email-already-in-use": "Этот email уже зарегистрирован.",
-    "auth/weak-password": "Пароль слишком короткий (минимум 6 символов).",
-    "auth/invalid-email": "Некорректный email.",
-    "auth/too-many-requests": "Слишком много попыток. Попробуйте позже.",
-    "permission-denied": "Недостаточно прав для этого действия.",
-    "unavailable": "Нет связи с сервером. Изменения сохранятся, когда связь восстановится.",
+    "auth/invalid-credential": "Incorrect email or password.",
+    "auth/wrong-password": "Incorrect email or password.",
+    "auth/user-not-found": "No account with this email.",
+    "auth/email-already-in-use": "This email is already registered.",
+    "auth/weak-password": "The password is too short (at least 6 characters).",
+    "auth/invalid-email": "Please enter a valid email address.",
+    "auth/too-many-requests": "Too many attempts. Please try again later.",
+    "permission-denied": "You do not have permission to do this.",
+    "unavailable": "No connection. Your changes will be saved when the connection is back.",
   };
   return map[c] || e?.message || String(e);
 }
 
 // Форма входа / регистрации / восстановления пароля (общая разметка)
-export function authFormHTML({ title, allowRegister }) {
+export function authFormHTML({ title, eyebrow = "", allowRegister }) {
   return `
   <div class="auth-card">
+    ${eyebrow ? `<div class="crs">${esc(eyebrow)}</div>` : ""}
     <h1>${esc(title)}</h1>
     <div class="auth-tabs">
-      <button data-mode="login" class="on">Вход</button>
-      ${allowRegister ? `<button data-mode="register">Регистрация</button>` : ""}
-      <button data-mode="reset">Забыли пароль?</button>
+      <button data-mode="login" class="on">Sign in</button>
+      ${allowRegister ? `<button data-mode="register">Create account</button>` : ""}
+      <button data-mode="reset">Forgot password?</button>
     </div>
     <form id="auth-form" novalidate>
-      <label class="f-register">Имя и фамилия<input name="name" autocomplete="name"></label>
+      <label class="f-register">Full name<input name="name" autocomplete="name"></label>
       <label>Email<input name="email" type="email" autocomplete="email" required></label>
-      <label class="f-pass">Пароль<input name="password" type="password" autocomplete="current-password" minlength="6"></label>
-      <label class="f-register">Код группы (выдаёт преподаватель)<input name="group" autocomplete="off"></label>
-      <button type="submit" class="btn primary" id="auth-submit">Войти</button>
+      <label class="f-pass">Password<input name="password" type="password" autocomplete="current-password" minlength="6"></label>
+      <label class="f-register">Group code (from your teacher)<input name="group" autocomplete="off"></label>
+      <button type="submit" class="btn primary" id="auth-submit">Sign in</button>
       <p class="auth-msg" id="auth-msg"></p>
     </form>
   </div>`;
@@ -238,7 +239,7 @@ export function wireAuthForm(root, handlers) {
     root.querySelectorAll(".auth-tabs button").forEach((b) => b.classList.toggle("on", b.dataset.mode === m));
     root.querySelectorAll(".f-register").forEach((el) => (el.hidden = m !== "register"));
     root.querySelector(".f-pass").hidden = m === "reset";
-    root.querySelector("#auth-submit").textContent = { login: "Войти", register: "Зарегистрироваться", reset: "Отправить ссылку" }[m];
+    root.querySelector("#auth-submit").textContent = { login: "Sign in", register: "Create account", reset: "Send reset link" }[m];
     msg.textContent = "";
     msg.className = "auth-msg";
   };

@@ -1,5 +1,5 @@
-// Кабинет преподавателя: доступ к юнитам по группам, включение проверки,
-// ручная проверка открытых ответов, аналитика, импорт контента, группы.
+// Teacher's Edition: unit preview with keys, unit access per group, releasing results,
+// manual assessment of open answers, analytics, content import, groups and students.
 import {
   auth, db, onAuthStateChanged, signInWithEmailAndPassword, sendPasswordResetEmail, signOut,
   doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, orderBy,
@@ -8,8 +8,9 @@ import {
 import { COURSE_TITLE } from "./firebase-config.js";
 import {
   esc, renderBlocks, renderExercise, exercisesOf, isAuto, gradeAuto, buildResult, keyText, norm,
-  fmtTime, friendlyError, authFormHTML, wireAuthForm, subId, itemMax, KIND_LABEL,
+  fmtTime, friendlyError, authFormHTML, wireAuthForm, subId, KIND_LABEL,
 } from "./common.js";
+import { initShell, renderUnitNav, wireUnitNav } from "./shell.js";
 
 const $ = (s) => document.querySelector(s);
 const ls = {
@@ -17,18 +18,30 @@ const ls = {
   set: (k, v) => { try { localStorage.setItem("t:" + k, v); } catch {} },
 };
 const T = {
-  user: null, groups: [], units: [], users: [],
-  gid: ls.get("gid", ""), unitId: ls.get("unit", ""), tab: ls.get("tab", "access"),
+  user: null, groups: [], units: [], users: [], usersLoaded: false,
+  gid: ls.get("gid", ""), unitId: ls.get("unit", ""),
   students: [], subs: [], results: {},
   unitData: {},          // unitId -> {content, keys, notes}
-  selected: null,        // uid выбранного студента во вкладке «Работы»
-  preview: null,         // unitId для предпросмотра
+  selected: null,        // student uid opened in "Student work"
   includeDrafts: false,
+  groupFilter: null,
   showCorrect: ls.get("showCorrect", "1") === "1",
   unsub: [], ctxUnsub: [],
 };
 
+const TOOLS = [
+  { id: "access", icon: "🔓", title: "Access & results", sub: "Open units, release results" },
+  { id: "works", icon: "📝", title: "Student work", sub: "Answers, open-answer marking" },
+  { id: "stats", icon: "📊", title: "Analytics", sub: "Difficult questions, heat map" },
+  { id: "groups", icon: "👥", title: "Groups & students", sub: "Group codes, moving students" },
+  { id: "content", icon: "📦", title: "Course content", sub: "Import units and keys" },
+];
+
+document.title = `Teacher's Edition · ${COURSE_TITLE}`;
 document.querySelectorAll("[data-course-title]").forEach((el) => (el.textContent = COURSE_TITLE));
+initShell();
+wireUnitNav($("#unit-nav"), () => renderNav());
+
 function toast(t, ms = 3500) {
   const el = document.createElement("div");
   el.className = "toast"; el.textContent = t;
@@ -36,21 +49,21 @@ function toast(t, ms = 3500) {
   setTimeout(() => el.remove(), ms);
 }
 async function guard(fn) {
-  try { return await fn(); } catch (e) { console.error(e); toast("Ошибка: " + friendlyError(e), 6000); }
+  try { return await fn(); } catch (e) { console.error(e); toast("Error: " + friendlyError(e), 6000); }
 }
 
 // ------------------------------------------------------------------ auth
-$("#auth-screen").innerHTML = authFormHTML({ title: "Кабинет преподавателя", allowRegister: false });
+$("#auth-screen").innerHTML = authFormHTML({ eyebrow: COURSE_TITLE, title: "Teacher's Edition", allowRegister: false });
 wireAuthForm($("#auth-screen"), {
   async login(f) { await signInWithEmailAndPassword(auth, f.email.trim(), f.password); },
-  async reset(f) { await sendPasswordResetEmail(auth, f.email.trim()); return "Письмо отправлено."; },
+  async reset(f) { await sendPasswordResetEmail(auth, f.email.trim()); return "We have sent you a link to reset your password."; },
 });
 $("#logout").addEventListener("click", () => signOut(auth));
 $("#logout2").addEventListener("click", (e) => { e.preventDefault(); signOut(auth); });
 
 onAuthStateChanged(auth, async (user) => {
   T.unsub.forEach((u) => u()); T.unsub = [];
-  T.ctxUnsub.forEach((u) => u()); T.ctxUnsub = [];
+  T.ctxUnsub.forEach((u) => u()); T.ctxUnsub = []; ctxKey = "";
   T.user = user;
   $("#boot").hidden = true;
   $("#auth-screen").hidden = !!user;
@@ -74,13 +87,19 @@ onAuthStateChanged(auth, async (user) => {
   }));
 });
 
-// ------------------------------------------------------------------ контекст (группа + юнит)
+// ------------------------------------------------------------------ context: group + unit
 function fillCtx() {
-  $("#ctx-group").innerHTML = T.groups.map((g) => `<option value="${esc(g.id)}" ${g.id === T.gid ? "selected" : ""}>${esc(g.name || g.id)} (${esc(g.id)})</option>`).join("") || `<option value="">— нет групп —</option>`;
-  $("#ctx-unit").innerHTML = T.units.map((u) => `<option value="${esc(u.id)}" ${u.id === T.unitId ? "selected" : ""}>${esc(u.title)}</option>`).join("") || `<option value="">— нет юнитов —</option>`;
+  $("#ctx-group").innerHTML = T.groups.map((g) => `<option value="${esc(g.id)}" ${g.id === T.gid ? "selected" : ""}>${esc(g.name || g.id)}</option>`).join("") || `<option value="">no groups yet</option>`;
+  $("#ctx-unit").innerHTML = T.units.map((u, i) => `<option value="${esc(u.id)}" ${u.id === T.unitId ? "selected" : ""}>Unit ${u.order || i + 1}</option>`).join("") || `<option value="">no units yet</option>`;
 }
 $("#ctx-group").addEventListener("change", (e) => { T.gid = e.target.value; ls.set("gid", T.gid); T.selected = null; subscribeCtx(); render(); });
-$("#ctx-unit").addEventListener("change", (e) => { T.unitId = e.target.value; ls.set("unit", T.unitId); T.selected = null; subscribeCtx(); render(); });
+$("#ctx-unit").addEventListener("change", (e) => setUnit(e.target.value));
+function setUnit(id) {
+  if (!id || id === T.unitId) return;
+  T.unitId = id; ls.set("unit", id); T.selected = null;
+  $("#ctx-unit").value = id;
+  subscribeCtx(); render();
+}
 
 let ctxKey = "";
 function subscribeCtx() {
@@ -90,7 +109,7 @@ function subscribeCtx() {
   T.ctxUnsub.forEach((u) => u()); T.ctxUnsub = [];
   T.students = []; T.subs = []; T.results = {};
   if (!T.gid) return;
-  // Студенты группы, их работы и результаты — в реальном времени
+  // students of the group, their work and results — all in real time
   T.ctxUnsub.push(onSnapshot(query(collection(db, "users"), where("groupId", "==", T.gid)), (snap) => {
     T.students = snap.docs.map((d) => ({ uid: d.id, ...d.data() })).sort((a, b) => a.name.localeCompare(b.name));
     render();
@@ -118,57 +137,137 @@ async function loadUnitData(unitId, force = false) {
   return T.unitData[unitId];
 }
 
-// ------------------------------------------------------------------ вкладки
-$("#tabs").addEventListener("click", (e) => {
-  const b = e.target.closest("button[data-tab]");
-  if (!b) return;
-  T.tab = b.dataset.tab; ls.set("tab", T.tab); render();
+// ------------------------------------------------------------------ routing & sidebar
+// #tools/<id>  — teaching tools;  #<unitId>/<sectionId> — unit with keys and notes
+function route() {
+  const [a, b] = location.hash.replace(/^#/, "").split("/");
+  if (!a || a === "tools") return { tool: TOOLS.find((t) => t.id === b)?.id || "access" };
+  return { unit: a, section: b || null };
+}
+window.addEventListener("hashchange", () => {
+  const r = route();
+  if (r.unit) setUnit(r.unit);
+  T.selected = r.tool === "works" ? T.selected : null;
+  render(true);
+  window.scrollTo(0, 0);
 });
+
 const group = () => T.groups.find((g) => g.id === T.gid);
 const unit = () => T.units.find((u) => u.id === T.unitId);
+const unitNum = (u) => u.order || T.units.indexOf(u) + 1;
 
-function render() {
-  if (!T.user || $("#app").hidden) return;
-  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === T.tab));
-  // не перерисовываем вкладку, пока преподаватель печатает оценку/комментарий
-  const a = document.activeElement;
-  if (a && $("#view").contains(a) && (a.matches(".g-score,.g-comment,textarea.json,input[type=text],input:not([type])"))) return;
-  const v = $("#view");
-  const views = { access: viewAccess, works: viewWorks, stats: viewStats, content: viewContent, groups: viewGroups };
-  v.innerHTML = (views[T.tab] || viewAccess)();
+function renderNav() {
+  const r = route();
+  $("#tool-nav").innerHTML = TOOLS.map((t) => `<a class="sb-item ${r.tool === t.id ? "on" : ""}" href="#tools/${t.id}">
+      <span class="ic">${t.icon}</span><span class="t">${t.title}<span class="s">${t.sub}</span></span></a>`).join("");
+  const g = group();
+  renderUnitNav($("#unit-nav"), {
+    units: T.units,
+    route: { unit: r.unit, section: r.section },
+    state: (u) => {
+      if (u.status === "soon") return { locked: false, note: "Coming soon", noteClass: "lock" };
+      if (!g) return { locked: false, note: "" };
+      if (g.releasedUnits.includes(u.id)) return { locked: false, note: `✓ Results released · ${esc(g.name)}`, noteClass: "good" };
+      if (g.openUnits.includes(u.id)) return { locked: false, note: `Open for ${esc(g.name)}`, noteClass: "good" };
+      return { locked: false, note: `Closed for ${esc(g.name)}`, noteClass: "lock" };
+    },
+  });
 }
 
-// ================================================================== 1. Доступ и проверка
+function render(force = false) {
+  if (!T.user || $("#app").hidden) return;
+  renderNav();
+  // do not re-render while the teacher is typing a mark, comment or JSON
+  const a = document.activeElement;
+  if (!force && a && $("#view").contains(a) && a.matches(".g-score,.g-comment,textarea.json,input[type=text],input:not([type])")) return;
+  const r = route();
+  if (r.unit && r.unit !== T.unitId && T.units.some((u) => u.id === r.unit)) { setUnit(r.unit); return; }
+  $("#wrap").classList.toggle("wide", !!r.tool && r.tool !== "content");
+  if (r.unit) { $("#view").innerHTML = viewUnit(r); return; }
+  const tool = TOOLS.find((t) => t.id === r.tool);
+  $("#crumb").innerHTML = `<b>Teaching tools</b> &nbsp;&rsaquo;&nbsp; ${tool.title}`;
+  const views = { access: viewAccess, works: viewWorks, stats: viewStats, content: viewContent, groups: viewGroups };
+  $("#view").innerHTML = views[r.tool]();
+}
+
+const pageHead = (eyebrow, title, lead = "") =>
+  `<header class="page-h"><div class="pe">${eyebrow}</div><h2>${title}</h2>${lead ? `<p class="pl">${lead}</p>` : ""}</header>`;
+
+// ================================================================== Unit with keys
+function viewUnit(r) {
+  const u = T.units.find((x) => x.id === r.unit);
+  if (!u) return pageHead("Unit", "Unit not found");
+  const n = unitNum(u);
+  $("#crumb").innerHTML = `<b>Unit ${n}</b> &nbsp;&rsaquo;&nbsp; ${esc(u.title)}`;
+  const g = group();
+  const bar = g && u.status !== "soon" ? accessBar(u, g) : "";
+  if (u.status === "soon") return pageHead(`Unit ${n}`, esc(u.title)) + `<div class="locked-msg"><span class="big">🛠</span>This unit is still being prepared. Import its content in <a href="#tools/content">Course content</a>.</div>`;
+  const d = T.unitData[u.id];
+  if (!d) { loadUnitData(u.id).then(() => render(true)); return `<p class="muted">Loading…</p>`; }
+  if (!d.content) return pageHead(`Unit ${n}`, esc(u.title)) + `<div class="locked-msg">This unit has no content yet.</div>`;
+  const secs = d.content.sections;
+  const sec = secs.find((s) => s.id === r.section) || secs[0];
+  const i = secs.indexOf(sec);
+  const meta = (u.sections || []).find((s) => s.id === sec.id) || {};
+  $("#crumb").innerHTML = `<b>Unit ${n}</b> &nbsp;&rsaquo;&nbsp; ${n}.${i + 1} ${esc(sec.title)}`;
+  const blocks = [...sec.blocks];
+  for (const note of [...(d.notes[sec.id] || [])].reverse()) blocks.splice(note.at, 0, { type: "teacher-note", html: note.html });
+  const prev = secs[i - 1], next = secs[i + 1];
+  return bar + pageHead(`Unit ${n} &middot; ${n}.${i + 1}`, esc(sec.title), esc(meta.subtitle || sec.subtitle || ""))
+    + renderBlocks(blocks, (ex) => ({ key: d.keys[ex.id] || {}, readOnly: true }), `${n}.${i + 1}`)
+    + `<nav class="pager">
+      ${prev ? `<a class="pg" href="#${u.id}/${prev.id}"><span class="d">← Previous</span><span class="t">${n}.${i} ${esc(prev.title)}</span></a>` : ""}
+      ${next ? `<a class="pg next" href="#${u.id}/${next.id}"><span class="d">Next →</span><span class="t">${n}.${i + 2} ${esc(next.title)}</span></a>` : ""}
+    </nav>`;
+}
+
+function accessBar(u, g) {
+  const open = g.openUnits.includes(u.id), rel = g.releasedUnits.includes(u.id);
+  return `<div class="ub"><span>Group <b>${esc(g.name)}</b>:
+      <span class="pill ${open ? "on" : "off"}">${open ? "open" : "closed"}</span>
+      <span class="pill ${rel ? "on" : "off"}">${rel ? "results released" : "results hidden"}</span></span>
+    <span class="row">
+      <button class="btn small" data-act="toggle-open" data-unit="${esc(u.id)}">${open ? "Close for the group" : "Open for the group"}</button>
+      ${rel ? `<button class="btn small danger" data-act="unrelease" data-unit="${esc(u.id)}">Hide results</button>`
+            : `<button class="btn small good" data-act="release" data-unit="${esc(u.id)}" ${open ? "" : "disabled"}>Check &amp; release results</button>`}
+    </span></div>`;
+}
+
+// ================================================================== Access & results
 function viewAccess() {
   const g = group();
-  if (!g) return `<div class="box">Сначала создайте группу во вкладке «Группы и студенты».</div>`;
+  const head = pageHead("Teaching tools", "Access &amp; results",
+    "Students see changes immediately, without reloading the page.");
+  if (!g) return head + `<div class="box">First create a group in <a href="#tools/groups">Groups &amp; students</a>.</div>`;
   const rows = T.units.map((u) => {
     const soon = u.status === "soon";
     const open = g.openUnits.includes(u.id), rel = g.releasedUnits.includes(u.id);
     return `<tr>
-      <td>${esc(u.title)}<br><small class="muted">${esc(u.id)}</small></td>
-      <td>${soon ? `<span class="pill off">в разработке</span>` : `<span class="pill ${open ? "on" : "off"}">${open ? "открыт" : "закрыт"}</span>
-        <button class="btn small" data-act="toggle-open" data-unit="${esc(u.id)}">${open ? "Закрыть" : "Открыть"}</button>`}</td>
-      <td>${soon ? "" : `<span class="pill ${rel ? "on" : "off"}">${rel ? "проверка включена" : "выключена"}</span>
+      <td class="num">${unitNum(u)}</td>
+      <td><a href="#${esc(u.id)}">${esc(u.title)}</a></td>
+      <td>${soon ? `<span class="pill off">coming soon</span>` : `<span class="pill ${open ? "on" : "off"}">${open ? "open" : "closed"}</span>
+        <button class="btn small" data-act="toggle-open" data-unit="${esc(u.id)}">${open ? "Close" : "Open"}</button>`}</td>
+      <td>${soon ? "" : `<span class="pill ${rel ? "on" : "off"}">${rel ? "released" : "hidden"}</span>
         ${rel
-          ? `<button class="btn small" data-act="release" data-unit="${esc(u.id)}" title="Пересчитать результаты (например, для поздно сданных работ)">Перепроверить</button>
-             <button class="btn small danger" data-act="unrelease" data-unit="${esc(u.id)}">Скрыть результаты</button>`
-          : `<button class="btn small good" data-act="release" data-unit="${esc(u.id)}" ${open ? "" : "disabled"}>Включить проверку</button>`}`}</td>
+          ? `<button class="btn small" data-act="release" data-unit="${esc(u.id)}" title="Re-check, e.g. for work submitted late">Re-check</button>
+             <button class="btn small danger" data-act="unrelease" data-unit="${esc(u.id)}">Hide</button>`
+          : `<button class="btn small good" data-act="release" data-unit="${esc(u.id)}" ${open ? "" : "disabled"}>Check &amp; release</button>`}`}</td>
     </tr>`;
   }).join("");
-  return `<h2>Доступ и проверка — группа «${esc(g.name || g.id)}»</h2>
-  <p class="muted">Изменения видны студентам сразу, без перезагрузки страницы.
-  «Включить проверку» проверяет все <b>сданные</b> работы группы по ключам, сохраняет результаты и показывает их студентам. После этого менять ответы нельзя.</p>
-  <label class="row"><input type="checkbox" id="show-correct" ${T.showCorrect ? "checked" : ""}> Показывать студентам правильные ответы в их ошибках</label>
-  <table><tr><th>Юнит</th><th>Доступ для группы</th><th>Проверка</th></tr>${rows}</table>`;
+  return head + `
+  <div class="box"><b>Group: ${esc(g.name)}</b> <span class="muted">(code <code>${esc(g.id)}</code>)</span><br>
+  <span class="muted">“Check &amp; release” marks all <b>submitted</b> work of the group against the keys, saves the results and shows them to the students. After that students can no longer change their answers.</span>
+  <label class="row" style="margin-top:10px"><input type="checkbox" id="show-correct" ${T.showCorrect ? "checked" : ""}> Show students the correct answers to their mistakes</label></div>
+  <table class="t"><tr><th>#</th><th>Unit</th><th>Access for the group</th><th>Results</th></tr>${rows}</table>`;
 }
 
 document.addEventListener("change", (e) => {
   if (e.target.id === "show-correct") { T.showCorrect = e.target.checked; ls.set("showCorrect", T.showCorrect ? "1" : "0"); }
-  if (e.target.id === "inc-drafts") { T.includeDrafts = e.target.checked; render(); }
+  if (e.target.id === "inc-drafts") { T.includeDrafts = e.target.checked; render(true); }
+  if (e.target.id === "g-filter") { T.groupFilter = e.target.value; render(true); }
   if (e.target.matches("select[data-move]")) guard(async () => {
     await updateDoc(doc(db, "users", e.target.dataset.move), { groupId: e.target.value });
-    toast("Студент переведён в группу " + e.target.value);
+    toast("The student has been moved to another group.");
     await loadAllUsers();
   });
   if (e.target.id === "import-file") {
@@ -189,18 +288,17 @@ document.addEventListener("click", (e) => {
     }),
     "release": () => releaseUnit(T.gid, u),
     "unrelease": () => guard(async () => {
-      if (!confirm("Скрыть результаты от студентов? Студенты снова смогут править несданные черновики.")) return;
+      if (!confirm("Hide the results from the students? Students will again be able to edit drafts they have not submitted.")) return;
       await updateDoc(doc(db, "groups", T.gid), { releasedUnits: arrayRemove(u) });
     }),
-    "select-student": () => { T.selected = b.dataset.uid; T.tab = "works"; ls.set("tab", "works"); render(); $("#detail")?.scrollIntoView({ behavior: "smooth" }); },
+    "select-student": () => { T.selected = b.dataset.uid; if (route().tool !== "works") location.hash = "#tools/works"; else render(true); setTimeout(() => $("#detail")?.scrollIntoView({ behavior: "smooth" }), 50); },
     "save-grades": () => saveGrades(b.dataset.uid),
     "return": () => guard(async () => {
-      if (!confirm("Вернуть работу студенту на доработку?")) return;
+      if (!confirm("Return this work to the student for revision?")) return;
       await updateDoc(doc(db, "submissions", subId(T.unitId, b.dataset.uid)), { status: "draft" });
-      toast("Работа возвращена");
+      toast("The work has been returned to the student.");
     }),
     "import": () => importCourse(),
-    "preview": () => { T.preview = u; loadUnitData(u, true).then(render); },
     "delete-unit": () => deleteUnit(u),
     "create-group": () => createGroup(),
     "load-users": () => loadAllUsers(),
@@ -208,15 +306,15 @@ document.addEventListener("click", (e) => {
   handlers[act]?.();
 });
 
-// Проверка выполняется в браузере преподавателя: только он может читать ключи.
+// Marking runs in the teacher's browser: only teachers are allowed to read the keys.
 async function releaseUnit(gid, unitId) {
   await guard(async () => {
     const { content, keys } = await loadUnitData(unitId, true);
-    if (!content) throw new Error("У юнита нет контента.");
+    if (!content) throw new Error("This unit has no content.");
     const subs = (await getDocs(query(collection(db, "submissions"), where("groupId", "==", gid), where("unitId", "==", unitId))))
       .docs.map((d) => d.data()).filter((s) => s.status === "submitted");
     const drafts = T.unitId === unitId ? T.subs.filter((s) => s.status === "draft").length : 0;
-    if (!confirm(`Проверить и показать результаты?\nСданных работ: ${subs.length}${drafts ? `\nНесданных черновиков: ${drafts} (они не будут проверены и станут недоступны для правки)` : ""}`)) return;
+    if (!confirm(`Check the work and show the results to the students?\nSubmitted: ${subs.length}${drafts ? `\nNot submitted (drafts): ${drafts}. These will not be checked and can no longer be edited.` : ""}`)) return;
     const prev = Object.fromEntries((await getDocs(query(collection(db, "results"), where("groupId", "==", gid), where("unitId", "==", unitId))))
       .docs.map((d) => [d.data().uid, d.data()]));
     let batch = writeBatch(db), n = 0;
@@ -227,43 +325,44 @@ async function releaseUnit(gid, unitId) {
     }
     batch.update(doc(db, "groups", gid), { releasedUnits: arrayUnion(unitId) });
     await batch.commit();
-    toast(`Готово: проверено работ — ${subs.length}. Студенты уже видят результаты.`);
+    toast(`Done: ${subs.length} ${subs.length === 1 ? "piece of work" : "pieces of work"} checked. Students can see their results now.`);
   });
 }
 
-// ================================================================== 2. Работы студентов
+// ================================================================== Student work
 function viewWorks() {
   const g = group(), u = unit();
-  if (!g || !u) return `<div class="box">Выберите группу и юнит вверху страницы.</div>`;
+  const head = pageHead("Teaching tools", "Student work",
+    g && u ? `Unit ${unitNum(u)} · ${esc(u.title)} — group ${esc(g.name)}` : "");
+  if (!g || !u) return head + `<div class="box">Choose a group and a unit at the top of the page.</div>`;
   const data = T.unitData[u.id];
-  if (!data) return `<p class="muted">Загрузка…</p>`;
-  if (!data.content) return `<div class="box">У юнита «${esc(u.title)}» нет контента.</div>`;
+  if (!data) return head + `<p class="muted">Loading…</p>`;
+  if (!data.content) return head + `<div class="box">This unit has no content yet.</div>`;
   const subBy = Object.fromEntries(T.subs.map((s) => [s.uid, s]));
   const exs = exercisesOf(data.content);
   const totalItems = exs.reduce((n, ex) => n + (ex.items || []).length, 0);
+  const openTotal = exs.filter((ex) => !isAuto(ex)).reduce((n, ex) => n + ex.items.length, 0);
   const rows = T.students.map((st) => {
     const s = subBy[st.uid], r = T.results[st.uid];
     const filled = s ? exs.reduce((n, ex) => n + (ex.items || []).filter((it) => String(s.answers?.[ex.id]?.[it.id] ?? "").trim()).length, 0) : 0;
     const auto = s ? gradeAuto(data.content, s.answers, data.keys) : null;
-    const status = !s ? `<span class="pill off">не начинал</span>` : s.status === "submitted" ? `<span class="pill on">сдано</span>` : `<span class="pill warn">черновик</span>`;
-    const openTotal = exs.filter((ex) => !isAuto(ex)).reduce((n, ex) => n + ex.items.length, 0);
+    const status = !s ? `<span class="pill off">not started</span>` : s.status === "submitted" ? `<span class="pill on">submitted</span>` : `<span class="pill warn">draft</span>`;
     const openDone = r ? openTotal - (r.manualPending ?? openTotal) : 0;
     return `<tr class="${T.selected === st.uid ? "sel" : ""}">
-      <td>${esc(st.name)}<br><small class="muted">${esc(st.email)}</small></td>
+      <td><b>${esc(st.name)}</b><br><small class="muted">${esc(st.email)}</small></td>
       <td>${status}</td>
       <td>${s ? fmtTime(s.status === "submitted" ? s.submittedAt : s.updatedAt) : ""}</td>
       <td class="num">${filled} / ${totalItems}</td>
       <td class="num">${auto ? `${auto.score} / ${auto.max}` : ""}</td>
       <td class="num">${openTotal ? `${openDone} / ${openTotal}` : "—"}</td>
       <td class="num">${r ? `<b>${r.score} / ${r.max}</b>` : ""}</td>
-      <td>${s ? `<button class="btn small" data-act="select-student" data-uid="${esc(st.uid)}">Открыть</button>` : ""}</td>
+      <td>${s ? `<button class="btn small" data-act="select-student" data-uid="${esc(st.uid)}">Open</button>` : ""}</td>
     </tr>`;
   }).join("");
-  return `<h2>Работы: «${esc(u.title)}» — группа «${esc(g.name || g.id)}»</h2>
-    <p class="muted">Таблица обновляется в реальном времени, пока студенты работают. «Авто» — предварительный подсчёт по ключам (студентам не виден до включения проверки).
-    «Открытые» — сколько открытых ответов вы уже оценили.</p>
-    <table><tr><th>Студент</th><th>Статус</th><th>Изменено</th><th>Заполнено</th><th>Авто</th><th>Открытые</th><th>Итог</th><th></th></tr>
-    ${rows || `<tr><td colspan="8" class="muted">В группе пока нет студентов.</td></tr>`}</table>
+  return head + `
+    <p class="muted">The table updates live while students work. “Auto” is a preliminary score against the keys (students do not see it until you release the results). “Open” shows how many open answers you have already marked.</p>
+    <table class="t"><tr><th>Student</th><th>Status</th><th>Last change</th><th>Answered</th><th>Auto</th><th>Open</th><th>Total</th><th></th></tr>
+    ${rows || `<tr><td colspan="8" class="muted">There are no students in this group yet.</td></tr>`}</table>
     <div id="detail">${T.selected ? studentDetail(T.selected, data) : ""}</div>`;
 }
 
@@ -273,10 +372,12 @@ function studentDetail(uid, data) {
   if (!st || !sub) return "";
   const r = T.results[uid];
   const auto = gradeAuto(data.content, sub.answers, data.keys);
-  const body = data.content.sections.map((sec) => {
+  const u = unit(), n = unitNum(u);
+  const body = data.content.sections.map((sec, i) => {
     const exs = (sec.blocks || []).filter((b) => b.type === "exercise");
     if (!exs.length) return "";
-    return `<h3>${esc(sec.title)}</h3>` + exs.map((ex) => renderExercise(ex, {
+    return `<h3>${n}.${i + 1} ${esc(sec.title)}</h3>` + exs.map((ex, j) => renderExercise(ex, {
+      num: `${n}.${i + 1}.${j + 1}`,
       answers: sub.answers?.[ex.id] || {},
       readOnly: true,
       auto: isAuto(ex) ? auto.items[ex.id] : undefined,
@@ -286,16 +387,15 @@ function studentDetail(uid, data) {
   }).join("");
   return `<div class="box">
     <div class="row" style="justify-content:space-between">
-      <h2 style="margin:0;border:0">${esc(st.name)} — ${auto.score}/${auto.max} автопроверка</h2>
+      <h2 style="margin:0">${esc(st.name)} <span class="muted" style="font-size:16px">· auto-checked ${auto.score}/${auto.max}</span></h2>
       <div class="row">
-        ${sub.status === "submitted" && !group()?.releasedUnits.includes(T.unitId) ? `<button class="btn small" data-act="return" data-uid="${esc(uid)}">Вернуть на доработку</button>` : ""}
-        <button class="btn small primary" data-act="save-grades" data-uid="${esc(uid)}">Сохранить оценки</button>
+        ${sub.status === "submitted" && !group()?.releasedUnits.includes(T.unitId) ? `<button class="btn small" data-act="return" data-uid="${esc(uid)}">Return for revision</button>` : ""}
+        <button class="btn small primary" data-act="save-grades" data-uid="${esc(uid)}">Save marks</button>
       </div>
     </div>
-    <p class="muted">Зелёным — верно, красным — ошибка (→ правильный ответ). Для открытых ответов поставьте балл и комментарий, затем «Сохранить оценки».
-    Если проверка уже включена, студент увидит оценку сразу.</p>
+    <p class="muted">Green — correct; red — mistake (→ correct answer). For open answers, enter a score and a comment, then click “Save marks”. If the results are already released, the student sees the mark immediately.</p>
     ${body}
-    <div class="row"><button class="btn primary" data-act="save-grades" data-uid="${esc(uid)}">Сохранить оценки</button></div>
+    <div class="row"><button class="btn primary" data-act="save-grades" data-uid="${esc(uid)}">Save marks</button></div>
   </div>`;
 }
 
@@ -314,25 +414,26 @@ async function saveGrades(uid) {
     const r = buildResult({ sub, content: data.content, keys: data.keys, manual, showCorrect });
     await setDoc(doc(db, "results", subId(T.unitId, uid)), { ...r, gradedAt: serverTimestamp() });
     document.activeElement?.blur();
-    toast("Оценки сохранены");
-    render();
+    toast("Marks saved.");
+    render(true);
   });
 }
 
-// ================================================================== 3. Аналитика
+// ================================================================== Analytics
 function viewStats() {
   const g = group(), u = unit();
-  if (!g || !u) return `<div class="box">Выберите группу и юнит вверху страницы.</div>`;
+  const head = pageHead("Teaching tools", "Analytics",
+    g && u ? `Unit ${unitNum(u)} · ${esc(u.title)} — group ${esc(g.name)}` : "")
+    + `<label class="row"><input type="checkbox" id="inc-drafts" ${T.includeDrafts ? "checked" : ""}> include drafts that have not been submitted</label>`;
+  if (!g || !u) return head + `<div class="box">Choose a group and a unit at the top of the page.</div>`;
   const data = T.unitData[u.id];
-  if (!data?.content) return `<p class="muted">Нет данных.</p>`;
+  if (!data?.content) return head + `<p class="muted">No data.</p>`;
   const subs = T.subs.filter((s) => s.status === "submitted" || T.includeDrafts);
   const exs = exercisesOf(data.content);
   const nameOf = Object.fromEntries(T.students.map((s) => [s.uid, s.name]));
-  const header = `<h2>Аналитика: «${esc(u.title)}» — группа «${esc(g.name || g.id)}»</h2>
-    <label class="row"><input type="checkbox" id="inc-drafts" ${T.includeDrafts ? "checked" : ""}> учитывать несданные черновики</label>`;
-  if (!subs.length) return header + `<div class="box">Пока нет ${T.includeDrafts ? "работ" : "сданных работ"}.</div>`;
+  if (!subs.length) return head + `<div class="box">No ${T.includeDrafts ? "work" : "submitted work"} yet.</div>`;
 
-  // --- по вопросам
+  // per question
   const items = [];
   for (const ex of exs) {
     if (!isAuto(ex)) continue;
@@ -342,12 +443,12 @@ function viewStats() {
       for (const s of subs) {
         const given = s.answers?.[ex.id]?.[it.id] ?? "";
         if (norm(given) && (Array.isArray(key) ? key : [key]).some((k) => norm(k) === norm(given))) ok++;
-        else { const w = norm(given) || "(пусто)"; wrong[w] = (wrong[w] || 0) + 1; }
+        else { const w = norm(given) || "(blank)"; wrong[w] = (wrong[w] || 0) + 1; }
       }
       items.push({ ex, it, key, ok, n: subs.length, pct: Math.round((100 * ok) / subs.length), wrong: Object.entries(wrong).sort((a, b) => b[1] - a[1]) });
     }
   }
-  // --- по студентам и упражнениям
+  // per student and exercise
   const perStudent = subs.map((s) => {
     const a = gradeAuto(data.content, s.answers, data.keys);
     const byEx = {};
@@ -362,108 +463,94 @@ function viewStats() {
   const openItems = exs.filter((ex) => !isAuto(ex)).reduce((n, ex) => n + ex.items.length, 0);
   const graded = Object.values(T.results).reduce((n, r) => n + (openItems - (r.manualPending ?? openItems)), 0);
 
-  const wrongHTML = (w) => w.slice(0, 3).map(([ans, c]) => `«${esc(ans)}» ×${c}`).join(", ");
+  const wrongHTML = (w) => w.slice(0, 3).map(([ans, c]) => `“${esc(ans)}” ×${c}`).join(", ");
   const itemRow = (x) => `<tr>
       <td>${esc(x.ex.title)}<br><small class="muted">${esc(KIND_LABEL[x.ex.kind])}</small></td>
       <td>${esc(x.it.id)}. ${x.it.text.replace("___", "_____").replace(/<[^>]*>/g, "").slice(0, 90)}</td>
-      <td><span class="keyhint">${esc(keyText(x.key))}</span></td>
+      <td><span class="keyhint" style="margin:0">${esc(keyText(x.key))}</span></td>
       <td class="num">${x.pct}%<div class="bar"><i style="width:${x.pct}%;background:${heat(x.pct)}"></i></div></td>
       <td class="wrong-list">${wrongHTML(x.wrong)}</td></tr>`;
   const hardest = [...items].sort((a, b) => a.pct - b.pct).slice(0, 10);
 
-  return header + `
+  return head + `
     <div class="cards">
-      <div class="card"><b>${subs.length} / ${T.students.length}</b><span>работ в выборке / студентов</span></div>
-      <div class="card"><b>${avg}%</b><span>средний результат автопроверки</span></div>
-      <div class="card"><b>${hardest[0] ? hardest[0].pct + "%" : "—"}</b><span>самый трудный вопрос</span></div>
-      ${openItems ? `<div class="card"><b>${graded} / ${openItems * subs.length}</b><span>открытых ответов оценено</span></div>` : ""}
+      <div class="card"><b>${subs.length} / ${T.students.length}</b><span>pieces of work / students</span></div>
+      <div class="card"><b>${avg}%</b><span>average auto-checked score</span></div>
+      <div class="card"><b>${hardest[0] ? hardest[0].pct + "%" : "—"}</b><span>most difficult question</span></div>
+      ${openItems ? `<div class="card"><b>${graded} / ${openItems * subs.length}</b><span>open answers marked</span></div>` : ""}
     </div>
-    <h3>Вопросы, вызвавшие наибольшие трудности</h3>
-    <table><tr><th>Упражнение</th><th>Вопрос</th><th>Ключ</th><th>Верно</th><th>Частые ошибки</th></tr>${hardest.map(itemRow).join("")}</table>
+    <h3>Questions students found most difficult</h3>
+    <table class="t"><tr><th>Exercise</th><th>Question</th><th>Key</th><th>Correct</th><th>Most common mistakes</th></tr>${hardest.map(itemRow).join("")}</table>
 
-    <h3>Результаты по студентам и упражнениям</h3>
-    <div style="overflow-x:auto"><table><tr><th>Студент</th><th>Итого</th>${autoEx.map((ex) => `<th title="${esc(ex.title)}">${esc(ex.title.slice(0, 22))}</th>`).join("")}<th></th></tr>
-    ${perStudent.map((p) => `<tr><td>${esc(nameOf[p.s.uid] || p.s.uid)}${p.s.status !== "submitted" ? ` <span class="pill warn">черновик</span>` : ""}</td>
+    <h3>Results by student and exercise</h3>
+    <div style="overflow-x:auto"><table class="t"><tr><th>Student</th><th>Total</th>${autoEx.map((ex) => `<th title="${esc(ex.title)}">${esc(ex.title.slice(0, 22))}</th>`).join("")}<th></th></tr>
+    ${perStudent.map((p) => `<tr><td>${esc(nameOf[p.s.uid] || p.s.uid)}${p.s.status !== "submitted" ? ` <span class="pill warn">draft</span>` : ""}</td>
       <td class="num"><b>${p.a.score}/${p.a.max}</b> (${p.pct}%)</td>
       ${autoEx.map((ex) => `<td class="heat" style="background:${heat(p.byEx[ex.id], true)}">${p.byEx[ex.id] ?? "—"}%</td>`).join("")}
-      <td><button class="btn small" data-act="select-student" data-uid="${esc(p.s.uid)}">Ответы</button></td></tr>`).join("")}
+      <td><button class="btn small" data-act="select-student" data-uid="${esc(p.s.uid)}">Answers</button></td></tr>`).join("")}
     </table></div>
 
-    <details><summary>Все вопросы по порядку (${items.length})</summary>
-    <table><tr><th>Упражнение</th><th>Вопрос</th><th>Ключ</th><th>Верно</th><th>Ответы с ошибками</th></tr>${items.map(itemRow).join("")}</table></details>`;
+    <details><summary>All questions in order (${items.length})</summary>
+    <table class="t"><tr><th>Exercise</th><th>Question</th><th>Key</th><th>Correct</th><th>Wrong answers</th></tr>${items.map(itemRow).join("")}</table></details>`;
 }
 function heat(p, light) {
   if (p === null || p === undefined) return "transparent";
-  const c = p >= 80 ? [31, 107, 59] : p >= 50 ? [138, 106, 31] : [140, 59, 59];
+  const c = p >= 80 ? [29, 107, 69] : p >= 50 ? [192, 138, 46] : [162, 58, 42];
   return light ? `rgba(${c.join(",")},.15)` : `rgb(${c.join(",")})`;
 }
 
-// ================================================================== 4. Контент и ключи
+// ================================================================== Course content
 function viewContent() {
   const rows = T.units.map((u) => `<tr>
-    <td class="num">${esc(u.order)}</td><td><code>${esc(u.id)}</code></td><td>${esc(u.title)}</td>
-    <td>${u.status === "soon" ? `<span class="pill off">в разработке</span>` : `<span class="pill on">${(u.sections || []).length} разделов</span>`}</td>
-    <td>${u.status === "soon" ? "" : `<button class="btn small" data-act="preview" data-unit="${esc(u.id)}">Просмотр с ключами</button>`}
-        <button class="btn small danger" data-act="delete-unit" data-unit="${esc(u.id)}">Удалить</button></td></tr>`).join("");
-  let preview = "";
-  const pd = T.preview && T.unitData[T.preview];
-  if (pd?.content) {
-    const u = T.units.find((x) => x.id === T.preview);
-    preview = `<div class="box"><h2>${esc(u?.title || T.preview)} — версия преподавателя</h2>` +
-      pd.content.sections.map((s) => {
-        const blocks = [...s.blocks];
-        for (const n of [...(pd.notes[s.id] || [])].reverse()) blocks.splice(n.at, 0, { type: "teacher-note", html: n.html });
-        return `<h2>${esc(s.title)}</h2>` + renderBlocks(blocks, (ex) => ({ key: pd.keys[ex.id] || {}, readOnly: true }));
-      }).join("") + `</div>`;
-  }
-  return `<h2>Контент и ключи</h2>
+    <td class="num">${esc(u.order)}</td><td><code>${esc(u.id)}</code></td><td>${u.status === "soon" ? esc(u.title) : `<a href="#${esc(u.id)}">${esc(u.title)}</a>`}</td>
+    <td>${u.status === "soon" ? `<span class="pill off">coming soon</span>` : `<span class="pill on">${(u.sections || []).length} sections</span>`}</td>
+    <td><button class="btn small danger" data-act="delete-unit" data-unit="${esc(u.id)}">Delete</button></td></tr>`).join("");
+  return pageHead("Teaching tools", "Course content", "Units are imported from a JSON file that you keep on your computer.") + `
   <div class="box">
-    <h3 style="margin-top:0">Импорт курса из JSON</h3>
-    <p class="muted">Файл курса хранится у вас локально (не в публичном репозитории!). При импорте поля <code>answer</code> вырезаются из заданий
-    и сохраняются отдельно в <code>answerKeys</code>, а блоки <code>teacher-note</code> — в заметки преподавателя. Студенты не получают ни то, ни другое.
-    Повторный импорт юнита с тем же <code>id</code> заменяет его (ответы студентов сохраняются).</p>
+    <h3 style="margin-top:0">Import units from JSON</h3>
+    <p class="muted">Keep the course file on your computer, not in the public repository. On import, the <code>answer</code> fields are removed from the exercises and stored separately as keys, and <code>teacher-note</code> blocks become teaching notes. Students receive neither.
+    Importing a unit with an existing <code>id</code> replaces it; students' answers are kept.</p>
     <div class="row"><input type="file" id="import-file" accept=".json,application/json"></div>
-    <textarea class="json" id="import-text" placeholder='{"units":[{"id":"u1","order":1,"title":"Unit 1","sections":[...]}]}'></textarea>
-    <div class="row"><button class="btn primary" data-act="import">Импортировать</button></div>
+    <textarea class="json" id="import-text" placeholder='{"units":[{"id":"u1","order":1,"title":"…","sections":[…]}]}'></textarea>
+    <div class="row"><button class="btn primary" data-act="import">Import</button></div>
   </div>
-  <table><tr><th>#</th><th>id</th><th>Юнит</th><th>Состояние</th><th></th></tr>${rows || `<tr><td colspan="5" class="muted">Курс пуст — импортируйте JSON.</td></tr>`}</table>
-  ${preview}`;
+  <table class="t"><tr><th>#</th><th>id</th><th>Unit</th><th>Status</th><th></th></tr>${rows || `<tr><td colspan="5" class="muted">The course is empty. Import a JSON file.</td></tr>`}</table>`;
 }
 
 function splitUnit(u) {
-  if (!u.id || !/^[A-Za-z0-9_-]+$/.test(u.id)) throw new Error(`Некорректный id юнита: «${u.id}» (допустимы латиница, цифры, - и _)`);
-  if (!u.title) throw new Error(`У юнита ${u.id} нет title`);
+  if (!u.id || !/^[A-Za-z0-9_-]+$/.test(u.id)) throw new Error(`Invalid unit id “${u.id}” (use Latin letters, digits, - and _)`);
+  if (!u.title) throw new Error(`Unit ${u.id} has no title`);
   const hasContent = Array.isArray(u.sections) && u.sections.some((s) => (s.blocks || []).length);
   const meta = {
     title: u.title, order: Number(u.order ?? 0),
     status: u.status || (hasContent ? "ready" : "soon"),
-    sections: (u.sections || []).map((s) => ({ id: s.id, title: s.title })),
+    sections: (u.sections || []).map((s) => ({ id: s.id, title: s.title, ...(s.subtitle ? { subtitle: s.subtitle } : {}) })),
   };
   if (!hasContent) return { meta };
   const keys = {}, notes = {}, seen = new Set();
   const sections = u.sections.map((s) => {
-    if (!s.id || !s.title) throw new Error(`Раздел без id/title в юните ${u.id}`);
+    if (!s.id || !s.title) throw new Error(`A section in unit ${u.id} has no id or title`);
     const blocks = [];
     for (const b of s.blocks || []) {
       if (b.type === "teacher-note") { (notes[s.id] ??= []).push({ at: blocks.length, html: b.html }); continue; }
       if (b.type !== "exercise") { blocks.push(b); continue; }
-      if (!b.id || seen.has(b.id)) throw new Error(`Повторяющийся или пустой id упражнения: «${b.id}» (${u.id})`);
+      if (!b.id || seen.has(b.id)) throw new Error(`Missing or repeated exercise id “${b.id}” (${u.id})`);
       seen.add(b.id);
-      if (!KIND_LABEL[b.kind]) throw new Error(`Упражнение ${b.id}: неизвестный kind «${b.kind}» (gap | match | mcq | open)`);
+      if (!KIND_LABEL[b.kind]) throw new Error(`Exercise ${b.id}: unknown kind “${b.kind}” (gap | match | mcq | open)`);
       keys[b.id] = {};
       const items = (b.items || []).map((it) => {
         const { answer, ...rest } = it;
-        if (it.id === undefined) throw new Error(`Упражнение ${b.id}: у пункта нет id`);
+        if (it.id === undefined) throw new Error(`Exercise ${b.id}: an item has no id`);
         rest.id = String(it.id);
         if (b.kind !== "open") {
-          if (answer === undefined || answer === "") throw new Error(`Упражнение ${b.id}, пункт ${it.id}: нет answer`);
+          if (answer === undefined || answer === "") throw new Error(`Exercise ${b.id}, item ${it.id}: no answer`);
           keys[b.id][rest.id] = answer;
         }
         return rest;
       });
       blocks.push({ ...b, items });
     }
-    return { id: s.id, title: s.title, blocks };
+    return { id: s.id, title: s.title, ...(s.subtitle ? { subtitle: s.subtitle } : {}), blocks };
   });
   return { meta, content: { sections }, keys: { exercises: keys, notes } };
 }
@@ -471,86 +558,91 @@ function splitUnit(u) {
 async function importCourse() {
   await guard(async () => {
     const raw = $("#import-text").value.trim();
-    if (!raw) throw new Error("Вставьте JSON или выберите файл.");
+    if (!raw) throw new Error("Paste JSON or choose a file.");
     let json;
-    try { json = JSON.parse(raw); } catch (e) { throw new Error("Ошибка в JSON: " + e.message); }
+    try { json = JSON.parse(raw); } catch (e) { throw new Error("The JSON has an error: " + e.message); }
     const list = json.units || [json];
-    const parts = list.map(splitUnit);          // сначала валидируем всё
+    const parts = list.map(splitUnit);          // validate everything first
     const batch = writeBatch(db);
-    for (const p of parts) {
-      const id = list[parts.indexOf(p)].id;
+    parts.forEach((p, i) => {
+      const id = list[i].id;
       batch.set(doc(db, "units", id), p.meta);
       if (p.content) {
         batch.set(doc(db, "unitContent", id), p.content);
         batch.set(doc(db, "answerKeys", id), p.keys);
       }
-    }
+    });
     await batch.commit();
     for (const l of list) delete T.unitData[l.id];
     $("#import-text").value = "";
-    toast(`Импортировано юнитов: ${parts.length}`);
-    ctxKey = ""; subscribeCtx(); render();
+    toast(`Units imported: ${parts.length}`);
+    ctxKey = ""; subscribeCtx(); render(true);
   });
 }
 
 async function deleteUnit(u) {
-  if (!confirm(`Удалить юнит «${u}» вместе с ключами? Работы студентов останутся в базе.`)) return;
+  if (!confirm(`Delete unit “${u}” together with its keys? Students' answers stay in the database.`)) return;
   await guard(async () => {
     await Promise.all(["units", "unitContent", "answerKeys"].map((c) => deleteDoc(doc(db, c, u))));
-    toast("Юнит удалён");
+    toast("Unit deleted.");
   });
 }
 
-// ================================================================== 5. Группы и студенты
+// ================================================================== Groups & students
 function viewGroups() {
+  if (!T.usersLoaded) setTimeout(loadAllUsers, 0);
   const counts = {};
   T.users.forEach((u) => (counts[u.groupId] = (counts[u.groupId] || 0) + 1));
   const filter = T.groupFilter ?? T.gid;
   const list = T.users.filter((u) => !filter || u.groupId === filter).sort((a, b) => a.name.localeCompare(b.name));
-  return `<h2>Группы</h2>
+  return pageHead("Teaching tools", "Groups &amp; students", "Students enter the group code when they create an account.") + `
   <div class="box"><div class="row">
-    <input id="g-name" placeholder="Название группы, напр. ГМУ-21">
-    <input id="g-code" placeholder="Код (необязательно)" style="width:12em">
-    <button class="btn primary" data-act="create-group">Создать группу</button>
-  </div><p class="muted" style="margin-bottom:0">Код группы студенты вводят при регистрации. Если не указать — будет сгенерирован.</p></div>
-  <table><tr><th>Код</th><th>Название</th><th>Студентов</th><th>Открытые юниты</th></tr>
-  ${T.groups.map((g) => `<tr><td><code>${esc(g.id)}</code></td><td>${esc(g.name)}</td><td class="num">${T.users.length ? counts[g.id] || 0 : "…"}</td><td>${g.openUnits.map(esc).join(", ")}</td></tr>`).join("")}</table>
+    <input id="g-name" placeholder="Group name, e.g. PA-21">
+    <input id="g-code" placeholder="Code (optional)" style="width:12em">
+    <button class="btn primary" data-act="create-group">Create group</button>
+  </div><p class="muted" style="margin:8px 0 0">If you leave the code empty, one will be generated.</p></div>
+  <table class="t"><tr><th>Code</th><th>Group</th><th>Students</th><th>Open units</th></tr>
+  ${T.groups.map((g) => `<tr><td><code>${esc(g.id)}</code></td><td>${esc(g.name)}</td><td class="num">${T.usersLoaded ? counts[g.id] || 0 : "…"}</td><td>${g.openUnits.map((id) => { const u = T.units.find((x) => x.id === id); return u ? unitNum(u) : esc(id); }).join(", ") || "—"}</td></tr>`).join("")
+    || `<tr><td colspan="4" class="muted">No groups yet.</td></tr>`}</table>
 
-  <h2>Студенты</h2>
-  <div class="row">Фильтр: <select id="g-filter"><option value="">все группы</option>${T.groups.map((g) => `<option value="${esc(g.id)}" ${filter === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select>
-  <button class="btn small" data-act="load-users">Обновить список</button></div>
-  <table><tr><th>Имя</th><th>Email</th><th>Группа</th></tr>
+  <h3>Students</h3>
+  <div class="row">Show: <select id="g-filter"><option value="">all groups</option>${T.groups.map((g) => `<option value="${esc(g.id)}" ${filter === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select>
+  <button class="btn small" data-act="load-users">Refresh</button></div>
+  <table class="t"><tr><th>Name</th><th>Email</th><th>Group</th></tr>
   ${list.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td>
     <td><select data-move="${esc(u.uid)}">${T.groups.map((g) => `<option value="${esc(g.id)}" ${g.id === u.groupId ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select></td></tr>`).join("")
-    || `<tr><td colspan="3" class="muted">${T.usersLoaded ? "Нет студентов" : "Загрузка…"}</td></tr>`}</table>`;
+    || `<tr><td colspan="3" class="muted">${T.usersLoaded ? "No students" : "Loading…"}</td></tr>`}</table>`;
 }
-document.addEventListener("change", (e) => { if (e.target.id === "g-filter") { T.groupFilter = e.target.value; render(); } });
-$("#tabs").addEventListener("click", (e) => { if (e.target.dataset.tab === "groups") loadAllUsers(); });
-if (T.tab === "groups") setTimeout(loadAllUsers, 0);
 
+let loadingUsers = false;
 async function loadAllUsers() {
-  if (!T.user) return setTimeout(loadAllUsers, 500);
+  if (!T.user || loadingUsers) return;
+  loadingUsers = true;
   await guard(async () => {
     const snap = await getDocs(collection(db, "users"));
     T.users = snap.docs.map((d) => ({ uid: d.id, ...d.data() }));
     T.usersLoaded = true;
-    render();
   });
+  loadingUsers = false;
+  T.usersLoaded = true;
+  render(true);
 }
 
 async function createGroup() {
   await guard(async () => {
     const name = $("#g-name").value.trim();
     let code = $("#g-code").value.trim().toUpperCase();
-    if (!name) throw new Error("Укажите название группы");
+    if (!name) throw new Error("Please enter a group name.");
     if (!code) {
       const abc = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
       code = "G-" + Array.from(crypto.getRandomValues(new Uint8Array(5)), (x) => abc[x % abc.length]).join("");
     }
-    if (!/^[A-Z0-9-]{3,24}$/.test(code)) throw new Error("Код: 3–24 символа, латиница, цифры и дефис");
-    if ((await getDoc(doc(db, "groups", code))).exists()) throw new Error("Группа с таким кодом уже есть");
+    if (!/^[A-Z0-9-]{3,24}$/.test(code)) throw new Error("The code must be 3–24 characters: Latin letters, digits and hyphens.");
+    if ((await getDoc(doc(db, "groups", code))).exists()) throw new Error("A group with this code already exists.");
     await setDoc(doc(db, "groups", code), { name, openUnits: [], releasedUnits: [], createdAt: serverTimestamp() });
-    toast(`Группа создана. Код для студентов: ${code}`, 8000);
     $("#g-name").value = ""; $("#g-code").value = "";
+    document.activeElement?.blur();
+    toast(`Group created. Code for students: ${code}`, 8000);
+    loadAllUsers();
   });
 }

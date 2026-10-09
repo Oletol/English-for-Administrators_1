@@ -9,6 +9,7 @@ import { COURSE_TITLE } from "./firebase-config.js";
 import {
   esc, renderBlocks, readInput, fmtTime, friendlyError, authFormHTML, wireAuthForm, subId, exercisesOf, isAuto,
 } from "./common.js";
+import { initShell, renderUnitNav, wireUnitNav } from "./shell.js";
 
 const $ = (s) => document.querySelector(s);
 const S = {
@@ -24,19 +25,21 @@ let saveTimer = null;
 
 document.title = COURSE_TITLE;
 document.querySelectorAll("[data-course-title]").forEach((el) => (el.textContent = COURSE_TITLE));
+initShell();
+wireUnitNav(document.querySelector("#unit-nav"), () => renderNav());
 
 // ------------------------------------------------------------------ auth
-$("#auth-screen").innerHTML = authFormHTML({ title: COURSE_TITLE, allowRegister: true });
+$("#auth-screen").innerHTML = authFormHTML({ eyebrow: "Course Workbook", title: COURSE_TITLE, allowRegister: true });
 wireAuthForm($("#auth-screen"), {
   async login(f) { await signInWithEmailAndPassword(auth, f.email.trim(), f.password); },
   async reset(f) {
     await sendPasswordResetEmail(auth, f.email.trim());
-    return "Письмо со ссылкой для смены пароля отправлено (проверьте папку «Спам»).";
+    return "We have sent you a link to reset your password. Please check your Spam folder too.";
   },
   async register(f) {
     const name = (f.name || "").trim(), group = (f.group || "").trim().toUpperCase();
-    if (!name) throw new Error("Укажите имя.");
-    if (!group) throw new Error("Укажите код группы.");
+    if (!name) throw new Error("Please enter your name.");
+    if (!group) throw new Error("Please enter your group code.");
     S.registering = true;
     const cred = await createUserWithEmailAndPassword(auth, f.email.trim(), f.password);
     try {
@@ -46,7 +49,7 @@ wireAuthForm($("#auth-screen"), {
       });
     } catch (e) {
       await cred.user.delete().catch(() => {});
-      throw new Error("Группа с таким кодом не найдена. Уточните код у преподавателя.");
+      throw new Error("There is no group with this code. Please check the code with your teacher.");
     } finally {
       S.registering = false;
     }
@@ -68,8 +71,8 @@ onAuthStateChanged(auth, (user) => {
       if (S.registering) return;
       const isTeacher = (await getDoc(doc(db, "teachers", user.uid)).catch(() => null))?.exists();
       $("#content").innerHTML = isTeacher
-        ? `<div class="panel"><p>Вы вошли как преподаватель. <a href="teacher.html">Открыть кабинет преподавателя →</a></p></div>`
-        : `<div class="panel"><p>Профиль студента не найден. Обратитесь к преподавателю.</p></div>`;
+        ? `<div class="locked-msg"><span class="big">👩‍🏫</span>You are signed in with a teacher account. <a href="teacher.html">Open the Teacher's Edition →</a></div>`
+        : `<div class="locked-msg">We could not find your student profile. Please contact your teacher.</div>`;
       return;
     }
     const prevGroup = S.profile?.groupId;
@@ -96,7 +99,7 @@ function subscribeGroup(gid) {
   groupUnsub?.();
   groupUnsub = onSnapshot(doc(db, "groups", gid), (snap) => {
     S.group = snap.exists() ? snap.data() : { openUnits: [], releasedUnits: [] };
-    $("#me-group").textContent = S.group.name || gid;
+    $("#me-group").textContent = "Group: " + (S.group.name || gid);
     syncUnitSubscriptions();
     renderNav(); renderMain();
   }, () => { S.group = { openUnits: [], releasedUnits: [] }; renderNav(); renderMain(); });
@@ -149,7 +152,7 @@ function ensureUnit(unitId) {
       if (!cur.dirty) cur.answers = server.answers || {};
     }
     syncUnitSubscriptions();
-    renderMain();
+    renderNav(); renderMain();
   }, () => { S.sub[unitId] ??= { answers: {}, status: "none", dirty: false }; renderMain(); });
 }
 
@@ -162,21 +165,23 @@ window.addEventListener("hashchange", async () => { await flushSave(); renderNav
 
 // ------------------------------------------------------------------ nav
 function renderNav() {
-  const r = route();
-  $("#unit-nav").innerHTML = S.units.map((u) => {
-    const open = isOpen(u.id), rel = isReleased(u.id);
-    const badge = u.status === "soon" ? `<span class="soon">в разработке</span>`
-      : !open ? `<span class="soon">🔒 закрыт</span>`
-      : rel ? `<span class="soon good">✓ результаты</span>` : "";
-    const sections = open && u.status !== "soon"
-      ? `<ul class="section-list">${(u.sections || []).map((s) =>
-          `<li><a href="#${esc(u.id)}/${esc(s.id)}" class="${r.unit === u.id && (r.section || u.sections[0]?.id) === s.id ? "active" : ""}">${esc(s.title)}</a></li>`).join("")}</ul>`
-      : "";
-    return `<div class="unit-block ${open ? "" : "locked"}"><div class="unit-title">${esc(u.title)}${badge}</div>${sections}</div>`;
-  }).join("");
+  renderUnitNav($("#unit-nav"), {
+    units: S.units,
+    route: route(),
+    state: (u) => {
+      if (u.status === "soon") return { locked: true, note: "Coming soon", noteClass: "lock" };
+      if (!isOpen(u.id)) return { locked: true, note: "🔒 Locked", noteClass: "lock" };
+      if (isReleased(u.id)) return { locked: false, note: "✓ Results available", noteClass: "good" };
+      const st = S.sub[u.id]?.status;
+      return { locked: false, note: st === "submitted" ? "Submitted" : "" };
+    },
+  });
 }
 
 // ------------------------------------------------------------------ main
+function setCrumb(html) { $("#crumb").innerHTML = html; }
+const unitNum = (u) => u.order || S.units.indexOf(u) + 1;
+
 function renderMain() {
   if (!S.user || !S.group) return;
   const r = route();
@@ -184,30 +189,40 @@ function renderMain() {
   const content = $("#content");
   if (!unit) {
     const open = S.units.filter((u) => isOpen(u.id) && u.status !== "soon");
-    $("#topbar-title").textContent = "Добро пожаловать";
+    document.title = COURSE_TITLE;
+    setCrumb(`<b>${esc(COURSE_TITLE)}</b>`);
     $("#unit-bar").innerHTML = "";
-    content.innerHTML = `<h2>Добро пожаловать${S.profile ? ", " + esc(S.profile.name) : ""}!</h2>
-      ${open.length ? `<p>Открытые разделы:</p><ul class="items">${open.map((u) => `<li><a href="#${esc(u.id)}">${esc(u.title)}</a></li>`).join("")}</ul>`
-        : `<p class="lead">Пока нет открытых разделов. Они появятся здесь автоматически, когда преподаватель их откроет.</p>`}`;
+    content.dataset.view = "";
+    content.innerHTML = `<header class="page-h"><div class="pe">Welcome</div><h2>Hello${S.profile ? ", " + esc(S.profile.name) : ""}!</h2>
+      <p class="pl">${open.length ? "Choose a unit to start working." : "No units are open yet. They will appear here automatically as soon as your teacher opens them."}</p></header>
+      ${open.length ? `<div class="cards">${open.map((u) => `<a class="pg" href="#${esc(u.id)}"><span class="d">Unit ${unitNum(u)}</span><span class="t">${esc(u.title)}</span></a>`).join("")}</div>` : ""}`;
     return;
   }
-  $("#topbar-title").textContent = unit.title;
+  document.title = `Unit ${unitNum(unit)} · ${unit.title}`;
+  setCrumb(`<b>Unit ${unitNum(unit)}</b> &nbsp;&rsaquo;&nbsp; ${esc(unit.title)}`);
   if (!isOpen(unit.id) || unit.status === "soon") {
     $("#unit-bar").innerHTML = "";
-    content.innerHTML = `<div class="locked-msg">🔒 Этот раздел пока закрыт. Он откроется автоматически, когда преподаватель даст доступ вашей группе.</div>`;
+    content.dataset.view = "";
+    content.innerHTML = `<header class="page-h"><div class="pe">Unit ${unitNum(unit)}</div><h2>${esc(unit.title)}</h2></header>
+      <div class="locked-msg"><span class="big">🔒</span>${unit.status === "soon"
+        ? "This unit is still being prepared."
+        : "This unit is not open yet. It will open automatically when your teacher gives your group access."}</div>`;
     return;
   }
   ensureUnit(unit.id);
   const c = S.content[unit.id], sub = S.sub[unit.id];
-  if (c === undefined || !sub) { content.innerHTML = `<p class="muted">Загрузка…</p>`; return; }
-  if (c === null) { content.innerHTML = `<div class="locked-msg">Нет доступа к разделу.</div>`; return; }
+  if (c === undefined || !sub) { content.innerHTML = `<p class="muted">Loading…</p>`; return; }
+  if (c === null) { content.innerHTML = `<div class="locked-msg">You do not have access to this unit.</div>`; return; }
 
   const sec = c.sections.find((s) => s.id === r.section) || c.sections[0];
+  const secIdx = c.sections.indexOf(sec) + 1;
+  const meta = (unit.sections || []).find((s) => s.id === sec.id) || {};
+  setCrumb(`<b>Unit ${unitNum(unit)}</b> &nbsp;&rsaquo;&nbsp; ${unitNum(unit)}.${secIdx} ${esc(sec.title)}`);
   const released = isReleased(unit.id);
   const res = released ? S.result[unit.id] : undefined;
   const readOnly = released || sub.status === "submitted";
 
-  // если фокус в поле ввода — не перерисовываем (иначе собьём курсор)
+  // do not re-render while the student is typing (keeps the cursor in place)
   const active = document.activeElement;
   if (content.dataset.view === `${unit.id}/${sec.id}/${readOnly}/${!!res}` && active?.dataset?.item && content.contains(active)) {
     renderUnitBar(unit, sub, released, res);
@@ -215,23 +230,26 @@ function renderMain() {
   }
   content.dataset.view = `${unit.id}/${sec.id}/${readOnly}/${!!res}`;
   content.dataset.unit = unit.id;
-  content.innerHTML = `<h2>${esc(sec.title)}</h2>` + renderBlocks(sec.blocks, (ex) => ({
-    answers: sub.answers?.[ex.id] || {},
-    readOnly,
-    auto: res ? (isAuto(ex) ? res.auto?.[ex.id] || {} : null) : undefined,
-    manual: res?.manual?.[ex.id],
-    showPending: !!res,
-  })) + pagerHTML(unit, c, sec);
+  content.innerHTML = `<header class="page-h"><div class="pe">Unit ${unitNum(unit)} &middot; ${unitNum(unit)}.${secIdx}</div>
+      <h2>${esc(sec.title)}</h2>${meta.subtitle || sec.subtitle ? `<p class="pl">${esc(meta.subtitle || sec.subtitle)}</p>` : ""}</header>`
+    + renderBlocks(sec.blocks, (ex) => ({
+      answers: sub.answers?.[ex.id] || {},
+      readOnly,
+      auto: res ? (isAuto(ex) ? res.auto?.[ex.id] || {} : null) : undefined,
+      manual: res?.manual?.[ex.id],
+      showPending: !!res,
+    }), `${unitNum(unit)}.${secIdx}`) + pagerHTML(unit, c, sec);
   renderUnitBar(unit, sub, released, res);
 }
 
 function pagerHTML(unit, c, sec) {
   const i = c.sections.indexOf(sec);
   const prev = c.sections[i - 1], next = c.sections[i + 1];
-  return `<div class="pager">
-    ${prev ? `<a class="btn" href="#${unit.id}/${prev.id}">← ${esc(prev.title)}</a>` : "<span></span>"}
-    ${next ? `<a class="btn" href="#${unit.id}/${next.id}">${esc(next.title)} →</a>` : "<span></span>"}
-  </div>`;
+  const n = unitNum(unit);
+  return `<nav class="pager">
+    ${prev ? `<a class="pg" href="#${unit.id}/${prev.id}"><span class="d">← Previous</span><span class="t">${n}.${i} ${esc(prev.title)}</span></a>` : ""}
+    ${next ? `<a class="pg next" href="#${unit.id}/${next.id}"><span class="d">Next →</span><span class="t">${n}.${i + 2} ${esc(next.title)}</span></a>` : ""}
+  </nav>`;
 }
 
 function renderUnitBar(unit, sub, released, res) {
@@ -239,14 +257,14 @@ function renderUnitBar(unit, sub, released, res) {
   let html;
   if (released) {
     html = res
-      ? `<div class="ub ub-res"><b>Результат: ${res.score} / ${res.max}</b>
-         <span>автопроверка ${res.autoScore}/${res.autoMax}${res.manualMax ? ` · открытые ответы ${res.manualPending ? "проверяются" : res.manualScore + "/" + res.manualMax}` : ""}</span></div>`
-      : `<div class="ub">Проверка включена, но ваша работа не была сдана.</div>`;
+      ? `<div class="ub ub-res"><b>Your result: ${res.score} / ${res.max}</b>
+         <span>Auto-checked tasks ${res.autoScore}/${res.autoMax}${res.manualMax ? ` · open answers ${res.manualPending ? "being assessed" : res.manualScore + "/" + res.manualMax}` : ""}</span></div>`
+      : `<div class="ub">Results are available, but your work for this unit was not submitted.</div>`;
   } else if (sub.status === "submitted") {
-    html = `<div class="ub ub-sub">✓ Работа сдана ${fmtTime(sub.submittedAt)} — ожидает проверки.</div>`;
+    html = `<div class="ub ub-sub">✓ Submitted ${fmtTime(sub.submittedAt)}. Your teacher will release the results.</div>`;
   } else {
-    html = `<div class="ub"><span id="save-state" class="muted">${sub.dirty ? "Есть несохранённые изменения" : sub.updatedAt ? "Черновик сохранён " + fmtTime(sub.updatedAt) : "Ответы сохраняются автоматически"}</span>
-      <button class="btn primary" id="submit-unit">Сдать работу по юниту</button></div>`;
+    html = `<div class="ub"><span id="save-state" class="muted">${sub.dirty ? "Unsaved changes…" : sub.updatedAt ? "Draft saved " + fmtTime(sub.updatedAt) : "Your answers are saved automatically"}</span>
+      <button class="btn primary" id="submit-unit">Submit this unit</button></div>`;
   }
   bar.innerHTML = html;
   $("#submit-unit")?.addEventListener("click", () => submitUnit(unit.id));
@@ -268,7 +286,7 @@ function onAnswer(e) {
   sub.answers[el.dataset.ex][el.dataset.item] = v;
   sub.dirty = true;
   writeLocal(unitId, sub.answers);
-  setSaveState("Изменения…");
+  setSaveState("Editing…");
   scheduleSave(unitId);
 }
 
@@ -286,20 +304,20 @@ async function saveDraft(unitId, status = "draft") {
     answers: sub.answers || {}, status, updatedAt: serverTimestamp(),
   };
   if (status === "submitted") data.submittedAt = serverTimestamp();
-  setSaveState("Сохранение…");
+  setSaveState("Saving…");
   const p = setDoc(doc(db, "submissions", subId(unitId, S.user.uid)), data);
   // запись уже в локальном кэше (IndexedDB) — даже офлайн она не потеряется
-  setSaveState("Сохранено на устройстве…");
+  setSaveState("Saved on this device…");
   try {
     await p;
     sub.updatedAt = new Date();
     sub.status = status;
     if (status === "submitted") sub.submittedAt = new Date();
     clearLocal(unitId);
-    setSaveState("✓ Сохранено " + fmtTime(new Date()));
+    setSaveState("✓ Saved " + fmtTime(new Date()));
   } catch (e) {
     sub.dirty = true;
-    setSaveState("⚠ Не сохранено: " + friendlyError(e));
+    setSaveState("⚠ Not saved: " + friendlyError(e));
     throw e;
   }
 }
@@ -316,7 +334,7 @@ async function submitUnit(unitId) {
   const c = S.content[unitId], sub = S.sub[unitId];
   const total = exercisesOf(c).reduce((n, ex) => n + (ex.items || []).length, 0);
   const filled = exercisesOf(c).reduce((n, ex) => n + (ex.items || []).filter((it) => String(sub.answers?.[ex.id]?.[it.id] ?? "").trim()).length, 0);
-  if (!confirm(`Сдать работу? Заполнено ${filled} из ${total} заданий.\nПосле сдачи изменить ответы будет нельзя.`)) return;
+  if (!confirm(`Submit your work? You have answered ${filled} of ${total} items.\nYou will not be able to change your answers after submitting.`)) return;
   clearTimeout(saveTimer);
   sub.dirty = true;
   try {
