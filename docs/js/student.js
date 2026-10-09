@@ -76,7 +76,7 @@ onAuthStateChanged(auth, (user) => {
       if (S.registering) return;
       const isTeacher = (await getDoc(doc(db, "teachers", user.uid)).catch(() => null))?.exists();
       $("#content").innerHTML = isTeacher
-        ? `<div class="locked-msg"><span class="big">👩‍🏫</span>You are signed in with a teacher account. <a href="teacher.html">Open the Teacher's Edition →</a></div>`
+        ? `<div class="locked-msg"><span class="big">👩‍🏫</span>You are signed in with a teacher account. <a href="teacher.html">Open the Teacher's Edition</a></div>`
         : `<div class="locked-msg">We could not find your student profile. Please contact your teacher.</div>`;
       return;
     }
@@ -209,7 +209,7 @@ function renderMain() {
     return;
   }
   document.title = `Unit ${unitNum(unit)} · ${unit.title}`;
-  setCrumb(`<b>Unit ${unitNum(unit)}</b> &nbsp;&rsaquo;&nbsp; ${esc(unit.title)}`);
+  setCrumb(`<b>Unit ${unitNum(unit)}</b> &middot; ${esc(unit.title)}`);
   if (!isOpen(unit.id) || unit.status === "soon") {
     $("#unit-bar").innerHTML = "";
     content.dataset.view = "";
@@ -227,7 +227,7 @@ function renderMain() {
   const sec = c.sections.find((s) => s.id === r.section) || c.sections[0];
   const secIdx = c.sections.indexOf(sec) + 1;
   const meta = (unit.sections || []).find((s) => s.id === sec.id) || {};
-  setCrumb(`<b>Unit ${unitNum(unit)}</b> &nbsp;&rsaquo;&nbsp; ${unitNum(unit)}.${secIdx} ${esc(sec.title)}`);
+  setCrumb(`<b>Unit ${unitNum(unit)}</b> &middot; ${unitNum(unit)}.${secIdx} ${esc(sec.title)}`);
   const released = isReleased(unit.id);
   const res = released ? S.result[unit.id] : undefined;
   const readOnly = released || sub.status === "submitted";
@@ -263,8 +263,8 @@ function pagerHTML(unit, c, sec) {
   const prev = c.sections[i - 1], next = c.sections[i + 1];
   const n = unitNum(unit);
   return `<nav class="pager">
-    ${prev ? `<a class="pg" href="#${unit.id}/${prev.id}"><span class="d">← Previous</span><span class="t">${n}.${i} ${esc(prev.title)}</span></a>` : ""}
-    ${next ? `<a class="pg next" href="#${unit.id}/${next.id}"><span class="d">Next →</span><span class="t">${n}.${i + 2} ${esc(next.title)}</span></a>` : ""}
+    ${prev ? `<a class="pg" href="#${unit.id}/${prev.id}"><span class="d">Previous</span><span class="t">${n}.${i} ${esc(prev.title)}</span></a>` : ""}
+    ${next ? `<a class="pg next" href="#${unit.id}/${next.id}"><span class="d">Next</span><span class="t">${n}.${i + 2} ${esc(next.title)}</span></a>` : ""}
   </nav>`;
 }
 

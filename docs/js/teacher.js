@@ -187,7 +187,7 @@ function render(force = false) {
   $("#wrap").classList.toggle("wide", !!r.tool && r.tool !== "content");
   if (r.unit) { $("#view").innerHTML = viewUnit(r); return; }
   const tool = TOOLS.find((t) => t.id === r.tool);
-  $("#crumb").innerHTML = `<b>Teaching tools</b> &nbsp;&rsaquo;&nbsp; ${tool.title}`;
+  $("#crumb").innerHTML = `<b>Teaching tools</b> &middot; ${tool.title}`;
   const views = { access: viewAccess, works: viewWorks, stats: viewStats, content: viewContent, groups: viewGroups };
   $("#view").innerHTML = views[r.tool]();
 }
@@ -200,7 +200,7 @@ function viewUnit(r) {
   const u = T.units.find((x) => x.id === r.unit);
   if (!u) return pageHead("Unit", "Unit not found");
   const n = unitNum(u);
-  $("#crumb").innerHTML = `<b>Unit ${n}</b> &nbsp;&rsaquo;&nbsp; ${esc(u.title)}`;
+  $("#crumb").innerHTML = `<b>Unit ${n}</b> &middot; ${esc(u.title)}`;
   const g = group();
   const bar = g && u.status !== "soon" ? accessBar(u, g) : "";
   if (u.status === "soon") return pageHead(`Unit ${n}`, esc(u.title)) + `<div class="locked-msg"><span class="big">🛠</span>This unit is still being prepared. Import its content in <a href="#tools/content">Course content</a>.</div>`;
@@ -211,7 +211,7 @@ function viewUnit(r) {
   const sec = secs.find((s) => s.id === r.section) || secs[0];
   const i = secs.indexOf(sec);
   const meta = (u.sections || []).find((s) => s.id === sec.id) || {};
-  $("#crumb").innerHTML = `<b>Unit ${n}</b> &nbsp;&rsaquo;&nbsp; ${n}.${i + 1} ${esc(sec.title)}`;
+  $("#crumb").innerHTML = `<b>Unit ${n}</b> &middot; ${n}.${i + 1} ${esc(sec.title)}`;
   const blocks = [...sec.blocks];
   for (const note of [...(d.notes[sec.id] || [])].reverse()) blocks.splice(note.at, 0, { type: "teacher-note", html: note.html });
   const prev = secs[i - 1], next = secs[i + 1];
@@ -222,8 +222,8 @@ function viewUnit(r) {
       before: isTeacherChecked(ex) && g ? exerciseBar(u, ex, g) : "",
     }), `${n}.${i + 1}`)
     + `<nav class="pager">
-      ${prev ? `<a class="pg" href="#${u.id}/${prev.id}"><span class="d">← Previous</span><span class="t">${n}.${i} ${esc(prev.title)}</span></a>` : ""}
-      ${next ? `<a class="pg next" href="#${u.id}/${next.id}"><span class="d">Next →</span><span class="t">${n}.${i + 2} ${esc(next.title)}</span></a>` : ""}
+      ${prev ? `<a class="pg" href="#${u.id}/${prev.id}"><span class="d">Previous</span><span class="t">${n}.${i} ${esc(prev.title)}</span></a>` : ""}
+      ${next ? `<a class="pg next" href="#${u.id}/${next.id}"><span class="d">Next</span><span class="t">${n}.${i + 2} ${esc(next.title)}</span></a>` : ""}
     </nav>`;
 }
 
@@ -441,7 +441,7 @@ function studentDetail(uid, data) {
         <button class="btn small primary" data-act="save-grades" data-uid="${esc(uid)}">Save marks</button>
       </div>
     </div>
-    <p class="muted">Green — correct; red — mistake (→ correct answer). For open answers, enter a score and a comment, then click “Save marks”. If the results are already released, the student sees the mark immediately.</p>
+    <p class="muted">Green — correct; red — mistake, with the correct answer next to it. For open answers, enter a score and a comment, then click “Save marks”. If the results are already released, the student sees the mark immediately.</p>
     ${body}
     <div class="row"><button class="btn primary" data-act="save-grades" data-uid="${esc(uid)}">Save marks</button></div>
   </div>`;

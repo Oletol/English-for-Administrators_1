@@ -48,7 +48,7 @@ export function renderUnitNav(el, { units, state, route, hrefPrefix = "", empty 
       <button class="sb-uh" type="button" data-unit="${esc(u.id)}" data-can-open="${canOpen ? 1 : 0}">
         <span class="u-n">${num}</span>
         <span class="u-t">${esc(u.title)}${st.note ? `<span class="u-s ${st.noteClass || ""}">${st.note}</span>` : ""}</span>
-        ${canOpen ? `<span class="chev">▼</span>` : ""}
+        ${canOpen ? `<span class="chev">${open ? "–" : "+"}</span>` : ""}
       </button>
       ${secs ? `<div class="sb-secs">${secs}</div>` : ""}
     </div>`;

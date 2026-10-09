@@ -126,7 +126,7 @@ step("Преподаватель проверяет одно упражнени�
 await t.click('.sb-uh[data-unit="u1"]').catch(() => {});
 await t.click('.sb-item:has-text("Warm-up")');
 await t.waitForSelector('[data-act="check-ex"][data-ex="m1"]');
-await t.locator('.ex-bar').screenshot({ path: `${SHOTS}/15-teacher-exbar.png` });
+await t.locator('.ex-bar').first().screenshot({ path: `${SHOTS}/15-teacher-exbar.png` });
 await t.click('[data-act="check-ex"][data-ex="m1"]');
 await s1.waitForSelector("#ex-m1 .ex-score", { timeout: 5000 });
 assert.equal((await s1.textContent("#ex-m1 .ex-score")).trim(), "11 / 15");
@@ -135,6 +135,25 @@ assert.equal(await s1.locator(sel("m1", "1")).isDisabled(), true, "провер�
 assert.equal(await s1.locator(sel("m2", "2")).isDisabled(), false, "другие упражнения открыты");
 assert.equal(await s1.locator("#ex-m2 .ex-score").count(), 0, "упражнение без ключа не проверяется");
 await shot(s1, "13-student-exercise-checked");
+
+step("1.1.3 и 1.1.4 проверяются преподавателем по отдельности");
+await s1.click('.sb-item:has-text("Warm-up")');
+await s1.fill(sel("m3", "1"), "reply to your message");
+await s1.fill(sel("m3", "8"), "Block him");
+await s1.fill(sel("m4", "1"), "with");
+await s1.fill(sel("m4", "2"), "of");
+await s1.locator("#save-state", { hasText: /Saved|saved/ }).waitFor({ timeout: 5000 });
+assert.equal(await s1.locator("#ex-m3 .ex-tag").textContent(), "Checked by your teacher");
+await t.click('[data-act="check-ex"][data-ex="m4"]');
+await s1.waitForSelector("#ex-m4 .ex-score", { timeout: 5000 });
+assert.equal((await s1.textContent("#ex-m4 .ex-score")).trim(), "1 / 15");
+assert.equal(await s1.locator("#ex-m3 .ex-score").count(), 0, "1.1.3 ещё не проверено");
+await t.click('[data-act="check-ex"][data-ex="m3"]');
+await s1.waitForSelector("#ex-m3 .ex-score", { timeout: 5000 });
+assert.equal((await s1.textContent("#ex-m3 .ex-score")).trim(), "2 / 15", "варианты ответа принимаются");
+const arrows = await s1.evaluate(() => /[→←⤮«»▼›]/.test(document.body.innerText));
+assert.equal(arrows, false, "в интерфейсе нет стрелок");
+await s1.locator("#ex-m4").screenshot({ path: `${SHOTS}/16-prepositions-checked.png` });
 
 step("Преподаватель видит черновик в реальном времени");
 await t.selectOption("#ctx-unit", "u1");

@@ -336,6 +336,259 @@
       {
        "type": "html",
        "html": "<div class=\"discuss\"><div class=\"d-h\"><span class=\"d-ic\">?</span>Talk about it</div><ol><li>Compare your answers with a partner. Find <b>three</b> situations where you disagree and explain your choice.</li><li>Which situations should <b>never</b> happen online? Why?</li><li>In which of the fifteen situations is the other person an official? Does that change how formal you are?</li></ol></div>"
+      },
+      {
+       "type": "exercise",
+       "id": "m3",
+       "kind": "gap",
+       "check": "teacher",
+       "title": "Complete the sentences",
+       "rubric": "Use one phrase from 1.1.1 in each sentence. Change the form where necessary (<i>lose</i> – <i>lost</i>, <i>a</i> – <i>the</i>).",
+       "items": [
+        {
+         "id": "1",
+         "text": "Sorry I didn&rsquo;t ___ yesterday &ndash; my phone battery was dead.",
+         "size": 22,
+         "answer": [
+          "reply to your message",
+          "reply to the message",
+          "reply to a message"
+         ]
+        },
+        {
+         "id": "2",
+         "text": "I spent an hour ___ the news before I realised it was midnight.",
+         "size": 20,
+         "answer": [
+          "scrolling through"
+         ]
+        },
+        {
+         "id": "3",
+         "text": "She ___ her sister over money, and they haven&rsquo;t spoken for a year.",
+         "size": 16,
+         "answer": [
+          "fell out with"
+         ]
+        },
+        {
+         "id": "4",
+         "text": "On holiday I always ___ for at least three days.",
+         "size": 14,
+         "answer": [
+          "go offline"
+         ]
+        },
+        {
+         "id": "5",
+         "text": "We were best friends at school, but we ___ after she moved to Kazan.",
+         "size": 14,
+         "answer": [
+          "lost touch"
+         ]
+        },
+        {
+         "id": "6",
+         "text": "Within an hour, hundreds of residents had ___ under the mayor&rsquo;s announcement.",
+         "size": 19,
+         "answer": [
+          "posted comments",
+          "posted a comment"
+         ]
+        },
+        {
+         "id": "7",
+         "text": "I think it is easier to ___ at university than at work.",
+         "size": 15,
+         "answer": [
+          "make friends"
+         ]
+        },
+        {
+         "id": "8",
+         "text": "If somebody keeps sending you spam, you can simply ___.",
+         "size": 20,
+         "answer": [
+          "block the contact",
+          "block him",
+          "block that contact"
+         ]
+        },
+        {
+         "id": "9",
+         "text": "I try to ___ with my old classmates through a group chat.",
+         "size": 16,
+         "answer": [
+          "keep in touch"
+         ]
+        },
+        {
+         "id": "10",
+         "text": "My parents live in Novosibirsk, so we ___ every Sunday evening.",
+         "size": 20,
+         "answer": [
+          "make a video call"
+         ]
+        },
+        {
+         "id": "11",
+         "text": "I have ___ for our building because it sends fifty messages a day.",
+         "size": 17,
+         "answer": [
+          "muted the chat"
+         ]
+        },
+        {
+         "id": "12",
+         "text": "He doesn&rsquo;t ___ his new manager &ndash; they argue about everything.",
+         "size": 19,
+         "answer": [
+          "get on well with"
+         ]
+        },
+        {
+         "id": "13",
+         "text": "Could you ___ to the online meeting in the group chat?",
+         "size": 17,
+         "answer": [
+          "share the link",
+          "share a link"
+         ]
+        },
+        {
+         "id": "14",
+         "text": "Anna and I ___: we both love old films and hate getting up early.",
+         "size": 22,
+         "answer": [
+          "have a lot in common",
+          "have something in common"
+         ]
+        },
+        {
+         "id": "15",
+         "text": "He didn&rsquo;t answer the phone, so I ___ asking him to call me back.",
+         "size": 22,
+         "answer": [
+          "left a voice message"
+         ]
+        }
+       ]
+      },
+      {
+       "type": "teacher-note",
+       "html": "<p>Accept natural variants (e.g. 8 <i>block him / block that contact</i>). Check verb forms: 5 and 15 past simple, 6 past perfect, 2 <i>-ing</i> after <i>spend time</i>, 11 present perfect.</p><p>The automatic check accepts the variants listed in the key. If a student writes another acceptable answer, it is marked as a mistake, so look through the answers in <b>Student work</b> before you discuss the results.</p>"
+      },
+      {
+       "type": "html",
+       "html": "<div class=\"discuss\"><div class=\"d-h\"><span class=\"d-ic\">?</span>Talk about it</div><ol><li>Which of these sentences are true for you? Change <b>two</b> of the others so that they become true.</li><li>Is it rude not to <b>reply to a message</b> within a day? Is it different if the message is from a teacher or a manager?</li><li>Do you have a chat for your building, your group or your family? What are its unwritten rules?</li></ol></div>"
+      },
+      {
+       "type": "exercise",
+       "id": "m4",
+       "kind": "gap",
+       "check": "teacher",
+       "title": "Prepositions",
+       "rubric": "Complete each sentence with <b>one</b> word.",
+       "items": [
+        {
+         "id": "1",
+         "text": "I get on very well ___ my new colleagues.",
+         "size": 9,
+         "answer": "with"
+        },
+        {
+         "id": "2",
+         "text": "We fell ___ over a stupid joke and didn&rsquo;t speak for a week.",
+         "size": 9,
+         "answer": "out"
+        },
+        {
+         "id": "3",
+         "text": "Let&rsquo;s keep ___ touch after the course is over.",
+         "size": 9,
+         "answer": "in"
+        },
+        {
+         "id": "4",
+         "text": "I have lost touch ___ most of my school friends.",
+         "size": 9,
+         "answer": "with"
+        },
+        {
+         "id": "5",
+         "text": "You can always rely ___ her &ndash; she never forgets a promise.",
+         "size": 9,
+         "answer": "on"
+        },
+        {
+         "id": "6",
+         "text": "Our new head of department is very easy to talk ___.",
+         "size": 9,
+         "answer": "to"
+        },
+        {
+         "id": "7",
+         "text": "I&rsquo;ll get back ___ you by Friday with an answer.",
+         "size": 9,
+         "answer": "to"
+        },
+        {
+         "id": "8",
+         "text": "Please get ___ touch with the press office if you have any questions.",
+         "size": 9,
+         "answer": "in"
+        },
+        {
+         "id": "9",
+         "text": "My brother and I have very little ___ common.",
+         "size": 9,
+         "answer": "in"
+        },
+        {
+         "id": "10",
+         "text": "Don&rsquo;t take it personally &ndash; he is rude ___ everybody.",
+         "size": 9,
+         "answer": "to"
+        },
+        {
+         "id": "11",
+         "text": "She is very good ___ explaining difficult ideas in simple words.",
+         "size": 9,
+         "answer": "at"
+        },
+        {
+         "id": "12",
+         "text": "I am not interested ___ celebrity news at all.",
+         "size": 9,
+         "answer": "in"
+        },
+        {
+         "id": "13",
+         "text": "The minister apologised ___ the delay in his reply.",
+         "size": 9,
+         "answer": "for"
+        },
+        {
+         "id": "14",
+         "text": "Many people complain ___ slow answers from state offices.",
+         "size": 9,
+         "answer": "about"
+        },
+        {
+         "id": "15",
+         "text": "I completely agree ___ you about the importance of tone.",
+         "size": 9,
+         "answer": "with"
+        }
+       ]
+      },
+      {
+       "type": "teacher-note",
+       "html": "<p>Dependent prepositions come back later in the course. Ask students to write the phrases as chunks in their vocabulary file: <i>rely on sb, apologise for sth, complain about sth, be good at sth</i>.</p>"
+      },
+      {
+       "type": "html",
+       "html": "<div class=\"discuss\"><div class=\"d-h\"><span class=\"d-ic\">?</span>Talk about it</div><ol><li>Who in your life can you always <b>rely on</b>? Give one example.</li><li>What makes a person <b>easy to talk to</b>? Why are some people difficult to talk to?</li><li>What do people in your city <b>complain about</b> most?</li></ol></div>"
       }
      ]
     },

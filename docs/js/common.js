@@ -146,7 +146,7 @@ export function renderExercise(ex, o = {}) {
     const r = o.auto?.[it.id];
     const mark = r ? (r.ok ? "ok" : "bad") : "";
     const attrs = `data-ex="${esc(ex.id)}" data-item="${esc(it.id)}" ${dis}`;
-    const corr = r && !r.ok && r.correct ? `<span class="corr">→ ${esc(showAns(ex, r.correct))}</span>` : "";
+    const corr = r && !r.ok && r.correct ? `<span class="corr">Correct: ${esc(showAns(ex, r.correct))}</span>` : "";
     const keyHint = o.key && o.key[it.id] !== undefined ? `<span class="keyhint">✓ ${esc(showAns(ex, keyText(o.key[it.id])))}</span>` : "";
     let body = "";
 
@@ -195,7 +195,7 @@ export function renderExercise(ex, o = {}) {
       const val = a[it.id] ?? "";
       const r = o.auto?.[it.id];
       const mark = r ? (r.ok ? "ok" : "bad") : "";
-      const corr = r && !r.ok && r.correct ? `<span class="corr">→ ${esc(r.correct)}</span>` : "";
+      const corr = r && !r.ok && r.correct ? `<span class="corr">Correct: ${esc(r.correct)}</span>` : "";
       const keyHint = o.key && o.key[it.id] !== undefined ? `<span class="keyhint">✓ ${esc(keyText(o.key[it.id]))}</span>` : "";
       return `<li><span class="m-word">${it.text}</span> <input class="gap ${mark}" style="width:5ch" maxlength="2" data-ex="${esc(ex.id)}" data-item="${esc(it.id)}" ${dis} value="${esc(val)}" ${NOAUTO}>${corr}${keyHint}</li>`;
     }).join("");
@@ -312,10 +312,10 @@ export function renderFlashcards(b) {
     ${b.rubric ? `<p class="ex-i">${b.rubric}</p>` : ""}
     <div class="fc-stage">${fcCard(cards[0], 0, cards.length)}</div>
     <div class="fc-nav">
-      <button class="btn small" type="button" data-fc="prev">← Previous</button>
+      <button class="btn small" type="button" data-fc="prev">Previous</button>
       <span class="fc-count">1 / ${cards.length}</span>
-      <button class="btn small" type="button" data-fc="next">Next →</button>
-      <button class="btn small" type="button" data-fc="shuffle" title="Mix the cards">⤮ Shuffle</button>
+      <button class="btn small" type="button" data-fc="next">Next</button>
+      <button class="btn small" type="button" data-fc="shuffle" title="Mix the cards">Shuffle</button>
     </div>
     <div class="fc-dots">${cards.map((_, i) => `<i class="${i === 0 ? "on" : ""}"></i>`).join("")}</div>
   </section>`;
