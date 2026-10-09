@@ -46,6 +46,10 @@ service cloud.firestore {
     function unitReleasedFor(gid, unitId) {
       return unitId in groupData(gid).releasedUnits;
     }
+    // упражнения юнита, которые преподаватель уже проверил по отдельности
+    function releasedEx(gid, unitId) {
+      return groupData(gid).get('releasedEx', {}).get(unitId, []);
+    }
     // id документов submissions/results: "<unitId>__<uid>"
     function ownsId(docId) {
       return signedIn() && docId.matches('^[A-Za-z0-9_-]+__' + request.auth.uid + '$');
@@ -88,7 +92,7 @@ service cloud.firestore {
     }
 
     // ---------- группы и доступ к юнитам ----------
-    // { name, openUnits: [unitId], releasedUnits: [unitId] }
+    // { name, openUnits: [unitId], releasedUnits: [unitId], releasedEx: { unitId: [exId] } }
     match /groups/{gid} {
       allow read: if isTeacher() || (signedIn() && myGroupId() == gid);
       allow write: if isTeacher();
@@ -132,7 +136,8 @@ service cloud.firestore {
 
       allow create: if signedIn()
         && validStudentDoc(request.resource.data)
-        && studentCanWrite(request.resource.data.unitId);
+        && studentCanWrite(request.resource.data.unitId)
+        && !request.resource.data.answers.keys().hasAny(releasedEx(myGroupId(), request.resource.data.unitId));
 
       allow update: if
         (signedIn()
@@ -140,11 +145,21 @@ service cloud.firestore {
           && resource.data.status == 'draft'           // сданную работу менять нельзя
           && validStudentDoc(request.resource.data)
           && request.resource.data.unitId == resource.data.unitId
-          && studentCanWrite(resource.data.unitId))
+          && studentCanWrite(resource.data.unitId)
+          // ответы в уже проверенных упражнениях менять нельзя
+          && !request.resource.data.answers.diff(resource.data.get('answers', {})).affectedKeys()
+                .hasAny(releasedEx(myGroupId(), resource.data.unitId)))
         || (isTeacher()                                 // «вернуть на доработку»
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']));
 
       allow delete: if isTeacher();
+    }
+
+    // ---------- результаты упражнений, проверенных преподавателем по отдельности ----------
+    // id = "<unitId>__<uid>"; там лежат только уже проверенные упражнения
+    match /exerciseResults/{rid} {
+      allow read: if isTeacher() || ownsId(rid);
+      allow write: if isTeacher();
     }
 
     // ---------- результаты проверки ----------

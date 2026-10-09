@@ -15,7 +15,13 @@ export function norm(s) {
 }
 
 export const KIND_LABEL = { gap: "Gap fill", match: "Matching", mcq: "Multiple choice", open: "Open answer" };
-export const isAuto = (ex) => ex.kind !== "open";
+// auto-checked: has keys (not "open", not marked "graded": false)
+export const isAuto = (ex) => ex.kind !== "open" && ex.graded !== false;
+// marked by the teacher by hand
+export const isManual = (ex) => ex.kind === "open";
+// checked by the teacher separately, exercise by exercise ("check": "teacher")
+export const isTeacherChecked = (ex) => isAuto(ex) && ex.check === "teacher";
+const NOAUTO = `autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"`;
 
 export const subId = (unitId, uid) => `${unitId}__${uid}`;
 
@@ -28,7 +34,7 @@ export function exercisesOf(content) {
 }
 
 export function itemMax(ex, item) {
-  return isAuto(ex) ? 1 : Number(item.max ?? ex.max ?? 5);
+  return isManual(ex) ? Number(item.max ?? ex.max ?? 5) : 1;
 }
 
 export function keyText(key) {
@@ -60,6 +66,20 @@ export function gradeAuto(content, answers, keys) {
   return { items, score, max };
 }
 
+// Check one exercise (used when the teacher checks a single exercise)
+export function gradeExercise(ex, answers, keys) {
+  const items = {};
+  let score = 0;
+  for (const it of ex.items || []) {
+    const given = answers?.[it.id] ?? "";
+    const key = keys?.[it.id];
+    const ok = isCorrect(given, key);
+    items[it.id] = { given, ok, correct: keyText(key) };
+    if (ok) score += 1;
+  }
+  return { items, score, max: (ex.items || []).length };
+}
+
 // Итоговый документ results/{unitId__uid}
 export function buildResult({ sub, content, keys, manual = {}, showCorrect = true }) {
   const auto = gradeAuto(content, sub.answers, keys);
@@ -67,7 +87,7 @@ export function buildResult({ sub, content, keys, manual = {}, showCorrect = tru
     for (const ex of Object.values(auto.items)) for (const r of Object.values(ex)) delete r.correct;
   let mScore = 0, mMax = 0, pending = 0;
   for (const ex of exercisesOf(content)) {
-    if (isAuto(ex)) continue;
+    if (!isManual(ex)) continue;
     for (const it of ex.items || []) {
       mMax += itemMax(ex, it);
       const g = manual?.[ex.id]?.[it.id];
@@ -101,6 +121,7 @@ export function renderBlocks(blocks, exOpts, numPrefix = "") {
   return (blocks || []).map((b) => {
     if (b.type === "html") return `<div class="block-html">${b.html}</div>`;
     if (b.type === "teacher-note") return `<div class="tnote"><div class="tn-h"><span class="tn-ic">T</span>Teaching notes</div><div class="tn-b">${b.html}</div></div>`;
+    if (b.type === "flashcards") return renderFlashcards(b);
     if (b.type === "exercise") { n += 1; return renderExercise(b, { num: numPrefix ? `${numPrefix}.${n}` : String(n), ...exOpts(b) }); }
     return "";
   }).join("\n");
@@ -127,8 +148,9 @@ export function renderExercise(ex, o = {}) {
     let body = "";
 
     if (ex.kind === "gap") {
-      const input = `<input class="gap ${mark}" ${attrs} value="${esc(val)}" size="${it.size || 14}" autocomplete="off" spellcheck="false">`;
-      body = it.text.includes("___") ? it.text.replace("___", input) : `${it.text} ${input}`;
+      const size = it.size || ex.size || 14;
+      const input = `<input class="gap ${ex.box ? "box" : ""} ${mark}" ${attrs} value="${esc(val)}" size="${size}" ${ex.box ? `style="width:${size + 1}ch"` : ""} ${NOAUTO}>`;
+      body = it.text.includes("___") ? it.text.replace("___", input) : `<span class="li-t">${it.text}</span>${input}`;
       body += corr + keyHint;
     } else if (ex.kind === "match") {
       const opts = (ex.options || []).map((op) =>
@@ -157,17 +179,32 @@ export function renderExercise(ex, o = {}) {
       } else if (o.auto !== undefined && o.showPending) {
         grade = `<div class="feedback muted">Waiting for the teacher's assessment</div>`;
       }
-      body = `${it.text}<textarea class="open-answer" rows="${it.rows || 5}" ${attrs} placeholder="${o.readOnly ? "" : "Type your answer here…"}">${esc(val)}</textarea>${grade}`;
+      body = `${it.text}<textarea class="open-answer" rows="${it.rows || 5}" ${attrs} ${NOAUTO} placeholder="${o.readOnly ? "" : "Type your answer here…"}">${esc(val)}</textarea>${grade}`;
     }
     return `<li>${body}</li>`;
   }).join("\n");
 
   const count = (ex.items || []).length;
-  return `<section class="ex" id="ex-${esc(ex.id)}">
-  <div class="ex-h">${o.num ? `<span class="ex-n">${esc(o.num)}</span>` : ""}<span class="ex-t">${esc(ex.title || "")}</span><span class="ex-c">${KIND_LABEL[ex.kind] || ""} · ${count} ${count === 1 ? "item" : "items"}</span>${scoreLine}</div>
+  let body = `<ol class="items ${ex.layout === "two" ? "two" : ""}">${items}</ol>`;
+  if (ex.kind === "match" && ex.display === "letters") {
+    // as in the printed workbook: type the letter next to each phrase, meanings listed on the right
+    const left = (ex.items || []).map((it) => {
+      const val = a[it.id] ?? "";
+      const r = o.auto?.[it.id];
+      const mark = r ? (r.ok ? "ok" : "bad") : "";
+      const corr = r && !r.ok && r.correct ? `<span class="corr">→ ${esc(r.correct)}</span>` : "";
+      const keyHint = o.key && o.key[it.id] !== undefined ? `<span class="keyhint">✓ ${esc(keyText(o.key[it.id]))}</span>` : "";
+      return `<li><span class="m-word">${it.text}</span> <input class="gap ${mark}" style="width:5ch" maxlength="2" data-ex="${esc(ex.id)}" data-item="${esc(it.id)}" ${dis} value="${esc(val)}" ${NOAUTO}>${corr}${keyHint}</li>`;
+    }).join("");
+    const right = (ex.options || []).map((op) => `<li>${op.text}</li>`).join("");
+    body = `<div class="match"><ol class="m-left">${left}</ol><ol class="m-right" type="a">${right}</ol></div>`;
+  }
+  const tag = o.tag ? `<span class="ex-tag">${o.tag}</span>` : "";
+  return `${o.before || ""}<section class="ex" id="ex-${esc(ex.id)}">
+  <div class="ex-h">${o.num ? `<span class="ex-n">${esc(o.num)}</span>` : ""}<span class="ex-t">${esc(ex.title || "")}</span><span class="ex-c">${count} ${count === 1 ? "item" : "items"}</span>${tag}${scoreLine}</div>
   ${ex.rubric ? `<p class="ex-i">${ex.rubric}</p>` : ""}
-  ${options}
-  <ol class="items">${items}</ol>
+  ${ex.display === "letters" ? "" : options}
+  ${body}
 </section>`;
 }
 
@@ -259,4 +296,66 @@ export function wireAuthForm(root, handlers) {
     }
   });
   setMode("login");
+}
+
+// ---------------------------------------------------------------------
+//  Flashcards: word on the front; translation and an example on the back
+// ---------------------------------------------------------------------
+export function renderFlashcards(b) {
+  const cards = b.cards || [];
+  const data = esc(JSON.stringify(cards));
+  return `<section class="fc" data-cards="${data}" data-i="0">
+    <div class="fc-h"><span class="ic">🃏</span><span class="ex-t">${esc(b.title || "Flashcards")}</span><span class="ex-c">${cards.length} words</span></div>
+    ${b.rubric ? `<p class="ex-i">${b.rubric}</p>` : ""}
+    <div class="fc-stage">${fcCard(cards[0], 0, cards.length)}</div>
+    <div class="fc-nav">
+      <button class="btn small" type="button" data-fc="prev">← Previous</button>
+      <span class="fc-count">1 / ${cards.length}</span>
+      <button class="btn small" type="button" data-fc="next">Next →</button>
+      <button class="btn small" type="button" data-fc="shuffle" title="Mix the cards">⤮ Shuffle</button>
+    </div>
+    <div class="fc-dots">${cards.map((_, i) => `<i class="${i === 0 ? "on" : ""}"></i>`).join("")}</div>
+  </section>`;
+}
+function fcCard(c, i, n) {
+  if (!c) return "";
+  return `<button type="button" class="fc-card" data-fc="flip" aria-label="Turn the card over">
+    <span class="fc-inner">
+      <span class="fc-face fc-front"><span class="w">${esc(c.front)}</span><span class="hint">Click to see the translation</span></span>
+      <span class="fc-face fc-back"><span class="w2">${esc(c.front)}</span><span class="tr">${esc(c.back)}</span>${c.example ? `<span class="eg">${esc(c.example)}</span>` : ""}</span>
+    </span></button>`;
+}
+let fcWired = false;
+export function wireFlashcards(root = document) {
+  if (fcWired) return;
+  fcWired = true;
+  const go = (fc, delta, shuffle) => {
+    let cards = JSON.parse(fc.dataset.cards);
+    let i = Number(fc.dataset.i);
+    if (shuffle) {
+      for (let k = cards.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); [cards[k], cards[j]] = [cards[j], cards[k]]; }
+      fc.dataset.cards = JSON.stringify(cards);
+      i = 0;
+    } else i = (i + delta + cards.length) % cards.length;
+    fc.dataset.i = i;
+    fc.querySelector(".fc-stage").innerHTML = fcCard(cards[i], i, cards.length);
+    fc.querySelector(".fc-count").textContent = `${i + 1} / ${cards.length}`;
+    fc.querySelectorAll(".fc-dots i").forEach((d, k) => d.classList.toggle("on", k === i));
+  };
+  root.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-fc]");
+    if (!b) return;
+    const fc = b.closest(".fc");
+    const act = b.dataset.fc;
+    if (act === "flip") b.classList.toggle("flip");
+    if (act === "next") go(fc, 1);
+    if (act === "prev") go(fc, -1);
+    if (act === "shuffle") go(fc, 0, true);
+  });
+  root.addEventListener("keydown", (e) => {
+    const fc = e.target.closest?.(".fc");
+    if (!fc) return;
+    if (e.key === "ArrowRight") { e.preventDefault(); go(fc, 1); fc.querySelector(".fc-card")?.focus(); }
+    if (e.key === "ArrowLeft") { e.preventDefault(); go(fc, -1); fc.querySelector(".fc-card")?.focus(); }
+  });
 }

@@ -89,15 +89,32 @@ export async function getDoc(ref) { await tick(); return snapDoc(ref.path, load(
 export async function getDocs(q) { await tick(); return runQuery(q.kind === "coll" ? { coll: q.coll } : q); }
 
 function write(mutator) { const all = load(LS_DB); mutator(all); save(LS_DB, all); notify(); }
+function deepMerge(old, add) {
+  if (!old || typeof old !== "object" || Array.isArray(old) || !add || typeof add !== "object" || Array.isArray(add) || "__ts" in add) return add;
+  const out = { ...old };
+  for (const [k, v] of Object.entries(add)) out[k] = deepMerge(old[k], v);
+  return out;
+}
+function applyPaths(obj, data) {
+  const out = structuredClone(obj || {});
+  for (const [k, v] of Object.entries(data)) {
+    const parts = k.split(".");
+    let cur = out;
+    for (const p of parts.slice(0, -1)) { cur[p] ??= {}; cur = cur[p]; }
+    const last = parts.at(-1);
+    cur[last] = resolve(v, cur[last]);
+  }
+  return out;
+}
 export async function setDoc(ref, data, opts) {
   await tick();
-  write((all) => { all[ref.path] = opts?.merge ? { ...(all[ref.path] || {}), ...resolve(data, all[ref.path]) } : resolve(data); });
+  write((all) => { all[ref.path] = opts?.merge ? deepMerge(all[ref.path] || {}, resolve(data, all[ref.path])) : resolve(data); });
 }
 export async function updateDoc(ref, data) {
   await tick();
   const all = load(LS_DB);
   if (!all[ref.path]) throw err("not-found");
-  write((a) => { a[ref.path] = { ...a[ref.path], ...resolve(data, a[ref.path]) }; });
+  write((a) => { a[ref.path] = applyPaths(a[ref.path], data); });
 }
 export async function deleteDoc(ref) { await tick(); write((all) => { delete all[ref.path]; }); }
 export function writeBatch() {

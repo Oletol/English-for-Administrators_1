@@ -8,7 +8,7 @@ import {
 import { COURSE_TITLE } from "./firebase-config.js";
 import {
   esc, renderBlocks, renderExercise, exercisesOf, isAuto, gradeAuto, buildResult, keyText, norm,
-  fmtTime, friendlyError, authFormHTML, wireAuthForm, subId, KIND_LABEL,
+  fmtTime, friendlyError, authFormHTML, wireAuthForm, subId, KIND_LABEL, isTeacherChecked, gradeExercise, wireFlashcards,
 } from "./common.js";
 import { initShell, renderUnitNav, wireUnitNav } from "./shell.js";
 
@@ -40,6 +40,7 @@ const TOOLS = [
 document.title = `Teacher's Edition · ${COURSE_TITLE}`;
 document.querySelectorAll("[data-course-title]").forEach((el) => (el.textContent = COURSE_TITLE));
 initShell();
+wireFlashcards();
 wireUnitNav($("#unit-nav"), () => renderNav());
 
 function toast(t, ms = 3500) {
@@ -75,7 +76,7 @@ onAuthStateChanged(auth, async (user) => {
   $("#me-email").textContent = user.email;
 
   T.unsub.push(onSnapshot(collection(db, "groups"), (snap) => {
-    T.groups = snap.docs.map((d) => ({ id: d.id, openUnits: [], releasedUnits: [], ...d.data() }))
+    T.groups = snap.docs.map((d) => ({ id: d.id, openUnits: [], releasedUnits: [], releasedEx: {}, ...d.data() }))
       .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
     if (!T.groups.find((g) => g.id === T.gid)) T.gid = T.groups[0]?.id || "";
     fillCtx(); subscribeCtx(); render();
@@ -164,6 +165,7 @@ function renderNav() {
   renderUnitNav($("#unit-nav"), {
     units: T.units,
     route: { unit: r.unit, section: r.section },
+    empty: `No units yet. Import the course file in <a href="#tools/content">Course content</a>.`,
     state: (u) => {
       if (u.status === "soon") return { locked: false, note: "Coming soon", noteClass: "lock" };
       if (!g) return { locked: false, note: "" };
@@ -214,11 +216,52 @@ function viewUnit(r) {
   for (const note of [...(d.notes[sec.id] || [])].reverse()) blocks.splice(note.at, 0, { type: "teacher-note", html: note.html });
   const prev = secs[i - 1], next = secs[i + 1];
   return bar + pageHead(`Unit ${n} &middot; ${n}.${i + 1}`, esc(sec.title), esc(meta.subtitle || sec.subtitle || ""))
-    + renderBlocks(blocks, (ex) => ({ key: d.keys[ex.id] || {}, readOnly: true }), `${n}.${i + 1}`)
+    + renderBlocks(blocks, (ex) => ({
+      key: d.keys[ex.id] || {}, readOnly: true,
+      tag: isTeacherChecked(ex) ? "Checked by the teacher" : "",
+      before: isTeacherChecked(ex) && g ? exerciseBar(u, ex, g) : "",
+    }), `${n}.${i + 1}`)
     + `<nav class="pager">
       ${prev ? `<a class="pg" href="#${u.id}/${prev.id}"><span class="d">← Previous</span><span class="t">${n}.${i} ${esc(prev.title)}</span></a>` : ""}
       ${next ? `<a class="pg next" href="#${u.id}/${next.id}"><span class="d">Next →</span><span class="t">${n}.${i + 2} ${esc(next.title)}</span></a>` : ""}
     </nav>`;
+}
+
+// Exercises marked "check": "teacher" are checked one at a time, when the teacher decides
+function exerciseBar(u, ex, g) {
+  const done = (g.releasedEx?.[u.id] || []).includes(ex.id);
+  return `<div class="ex-bar"><span>Group <b>${esc(g.name)}</b>: <span class="pill ${done ? "on" : "off"}">${done ? "checked · results shown" : "not checked yet"}</span></span>
+    <span class="sp" style="flex:1"></span>
+    ${done
+      ? `<button class="btn small" data-act="check-ex" data-unit="${esc(u.id)}" data-ex="${esc(ex.id)}" title="Check again, e.g. for students who answered later">Re-check</button>
+         <button class="btn small danger" data-act="uncheck-ex" data-unit="${esc(u.id)}" data-ex="${esc(ex.id)}">Hide results</button>`
+      : `<button class="btn small good" data-act="check-ex" data-unit="${esc(u.id)}" data-ex="${esc(ex.id)}" ${g.openUnits.includes(u.id) ? "" : "disabled title=\"Open the unit for the group first\""}>Check this exercise now</button>`}
+  </div>`;
+}
+
+async function checkExercise(gid, unitId, exId) {
+  await guard(async () => {
+    const { content, keys } = await loadUnitData(unitId, true);
+    const ex = exercisesOf(content).find((e) => e.id === exId);
+    if (!ex) throw new Error("Exercise not found.");
+    const subs = (await getDocs(query(collection(db, "submissions"), where("groupId", "==", gid), where("unitId", "==", unitId)))).docs.map((d) => d.data());
+    const answered = subs.filter((s) => Object.values(s.answers?.[exId] || {}).some((v) => String(v).trim()));
+    if (!confirm(`Check “${ex.title}” for the group and show the students their results?\nStudents who have answered: ${answered.length} of ${T.students.length}.\nAfter this, students can no longer change their answers in this exercise.`)) return;
+    let batch = writeBatch(db), n = 0;
+    for (const s of subs) {
+      const r = gradeExercise(ex, s.answers?.[exId], keys[exId]);
+      if (!T.showCorrect) for (const it of Object.values(r.items)) delete it.correct;
+      batch.set(doc(db, "exerciseResults", subId(unitId, s.uid)), {
+        uid: s.uid, groupId: gid, unitId,
+        items: { [exId]: r.items }, scores: { [exId]: { score: r.score, max: r.max } },
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+      if (++n % 400 === 0) { await batch.commit(); batch = writeBatch(db); }
+    }
+    batch.update(doc(db, "groups", gid), { [`releasedEx.${unitId}`]: arrayUnion(exId) });
+    await batch.commit();
+    toast(`Exercise checked for ${subs.length} ${subs.length === 1 ? "student" : "students"}. They can see their results now.`);
+  });
 }
 
 function accessBar(u, g) {
@@ -287,6 +330,11 @@ document.addEventListener("click", (e) => {
       await updateDoc(doc(db, "groups", T.gid), { openUnits: open ? arrayRemove(u) : arrayUnion(u) });
     }),
     "release": () => releaseUnit(T.gid, u),
+    "check-ex": () => checkExercise(T.gid, u, b.dataset.ex),
+    "uncheck-ex": () => guard(async () => {
+      if (!confirm("Hide the results of this exercise from the students? They will be able to change their answers again.")) return;
+      await updateDoc(doc(db, "groups", T.gid), { [`releasedEx.${u}`]: arrayRemove(b.dataset.ex) });
+    }),
     "unrelease": () => guard(async () => {
       if (!confirm("Hide the results from the students? Students will again be able to edit drafts they have not submitted.")) return;
       await updateDoc(doc(db, "groups", T.gid), { releasedUnits: arrayRemove(u) });
@@ -542,7 +590,7 @@ function splitUnit(u) {
         const { answer, ...rest } = it;
         if (it.id === undefined) throw new Error(`Exercise ${b.id}: an item has no id`);
         rest.id = String(it.id);
-        if (b.kind !== "open") {
+        if (b.kind !== "open" && b.graded !== false) {
           if (answer === undefined || answer === "") throw new Error(`Exercise ${b.id}, item ${it.id}: no answer`);
           keys[b.id][rest.id] = answer;
         }

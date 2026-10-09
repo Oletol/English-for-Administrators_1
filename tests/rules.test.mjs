@@ -116,3 +116,19 @@ test('студент не может выгрузить чужие работы 
   await assertFails(getDocs(query(collection(as(A), 'submissions'), where('groupId', '==', 'G1'))));
   await assertSucceeds(getDocs(query(collection(as(T), 'submissions'), where('groupId', '==', 'G1'), where('unitId', '==', 'u1'))));
 });
+
+// ---------- проверка отдельных упражнений ----------
+test('после проверки упражнения студент не может менять ответы в нём, но может в остальных', async () => {
+  const db = as(A);
+  await assertSucceeds(setDoc(doc(db, 'submissions', `u1__${A}`), draft(A, 'G1', { answers: { e1: { 1: 'x' }, e2: { 1: 'y' } } })));
+  await updateDoc(doc(as(T), 'groups', 'G1'), { 'releasedEx.u1': arrayUnion('e1') });
+  await assertFails(setDoc(doc(db, 'submissions', `u1__${A}`), draft(A, 'G1', { answers: { e1: { 1: 'changed' }, e2: { 1: 'y' } } })));
+  await assertSucceeds(setDoc(doc(db, 'submissions', `u1__${A}`), draft(A, 'G1', { answers: { e1: { 1: 'x' }, e2: { 1: 'new' } } })));
+});
+test('результаты отдельных упражнений: пишет только преподаватель, читает владелец', async () => {
+  const r = { uid: A, groupId: 'G1', unitId: 'u1', items: { e1: { 1: { ok: true } } } };
+  await assertFails(setDoc(doc(as(A), 'exerciseResults', `u1__${A}`), r));
+  await assertSucceeds(setDoc(doc(as(T), 'exerciseResults', `u1__${A}`), r));
+  await assertSucceeds(getDoc(doc(as(A), 'exerciseResults', `u1__${A}`)));
+  await assertFails(getDoc(doc(as(B), 'exerciseResults', `u1__${A}`)));
+});

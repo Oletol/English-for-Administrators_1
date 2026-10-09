@@ -8,7 +8,7 @@ const BASE = "http://127.0.0.1:5055";
 const SHOTS = process.env.SHOTS || "/tmp/shots";
 mkdirSync(SHOTS, { recursive: true });
 const mock = readFileSync(new URL("./mock-fb.js", import.meta.url), "utf8");
-const course = readFileSync(new URL("../content-private/course.json", import.meta.url), "utf8");
+const course = readFileSync(new URL("./fixture-course.json", import.meta.url), "utf8");
 
 const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" }).catch(() => chromium.launch());
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
@@ -100,6 +100,42 @@ await s1.reload();
 await s1.click('.sb-item:has-text("Grammar in Use")');
 assert.equal(await s1.inputValue(sel("g1", "2")), "gives", "черновик восстановлен после перезагрузки");
 
+step("Флеш-карточки и упражнение 1.1.1 (буквы)");
+await s1.click('.sb-item:has-text("Warm-up")');
+await s1.waitForSelector(".fc-card");
+await s1.click(".fc-card");
+assert.equal(await s1.locator(".fc-card.flip").count(), 1);
+await s1.waitForTimeout(500);
+await s1.locator(".fc").screenshot({ path: `${SHOTS}/14-flashcard-back.png` });
+await s1.click('[data-fc="next"]');
+assert.equal((await s1.textContent(".fc-count")).trim(), "2 / 15");
+const m1key = "b d e f a j n m h o i g l k c".split(" ");
+for (let i = 1; i <= 12; i++) await s1.fill(sel("m1", String(i)), i === 11 ? "x" : m1key[i - 1].toUpperCase());
+await s1.fill(sel("m2", "1"), "b");
+await s1.locator("#save-state", { hasText: /Saved|saved/ }).waitFor({ timeout: 5000 });
+await shot(s1, "11-student-warmup");
+
+step("Копирование и вставка запрещены");
+const pasteBlocked = await s1.evaluate((q) => { const el = document.querySelector(q); const e = new Event("paste", { bubbles: true, cancelable: true }); el.dispatchEvent(e); return e.defaultPrevented; }, sel("m1", "13"));
+assert.equal(pasteBlocked, true, "вставка заблокирована");
+const copyBlocked = await s1.evaluate(() => { const e = new Event("copy", { bubbles: true, cancelable: true }); document.querySelector("#content .ex-i").dispatchEvent(e); return e.defaultPrevented; });
+assert.equal(copyBlocked, true, "копирование заблокировано");
+assert.equal(await s1.evaluate(() => getComputedStyle(document.querySelector("#content .ex-i")).userSelect), "none");
+
+step("Преподаватель проверяет одно упражнение → студент видит результат сразу");
+await t.click('.sb-uh[data-unit="u1"]').catch(() => {});
+await t.click('.sb-item:has-text("Warm-up")');
+await t.waitForSelector('[data-act="check-ex"][data-ex="m1"]');
+await t.locator('.ex-bar').screenshot({ path: `${SHOTS}/15-teacher-exbar.png` });
+await t.click('[data-act="check-ex"][data-ex="m1"]');
+await s1.waitForSelector("#ex-m1 .ex-score", { timeout: 5000 });
+assert.equal((await s1.textContent("#ex-m1 .ex-score")).trim(), "11 / 15");
+assert.equal(await s1.locator(`${sel("m1", "11")}.bad`).count(), 1);
+assert.equal(await s1.locator(sel("m1", "1")).isDisabled(), true, "проверенное упражнение закрыто для правки");
+assert.equal(await s1.locator(sel("m2", "2")).isDisabled(), false, "другие упражнения открыты");
+assert.equal(await s1.locator("#ex-m2 .ex-score").count(), 0, "упражнение без ключа не проверяется");
+await shot(s1, "13-student-exercise-checked");
+
 step("Преподаватель видит черновик в реальном времени");
 await t.selectOption("#ctx-unit", "u1");
 await t.click('a[href="#tools/works"]');
@@ -109,6 +145,7 @@ await t.waitForSelector(".pill.warn:text('draft')");
 step("Студент 1 сдаёт работу");
 await s1.click("#submit-unit");
 await s1.waitForSelector(".ub-sub");
+await s1.click('.sb-item:has-text("Grammar in Use")');
 assert.equal(await s1.locator(sel("g1", "1")).isDisabled(), true);
 
 step("Студент 2 регистрируется, отвечает и сдаёт");

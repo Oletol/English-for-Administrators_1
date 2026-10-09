@@ -30,8 +30,9 @@ let lastUnit = null;
  * state(u) -> { locked: bool, note: string, noteClass: string }
  * route:  { unit, section }
  */
-export function renderUnitNav(el, { units, state, route, hrefPrefix = "" }) {
+export function renderUnitNav(el, { units, state, route, hrefPrefix = "", empty = "" }) {
   if (route.unit !== lastUnit) { manual.clear(); lastUnit = route.unit; }
+  if (!units.length) { el.innerHTML = `<div class="sb-empty">${empty}</div>`; return; }
   el.innerHTML = units.map((u, i) => {
     const st = state(u);
     const num = u.order || i + 1;

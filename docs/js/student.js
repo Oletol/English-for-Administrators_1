@@ -8,6 +8,7 @@ import {
 import { COURSE_TITLE } from "./firebase-config.js";
 import {
   esc, renderBlocks, readInput, fmtTime, friendlyError, authFormHTML, wireAuthForm, subId, exercisesOf, isAuto,
+  isTeacherChecked, wireFlashcards,
 } from "./common.js";
 import { initShell, renderUnitNav, wireUnitNav } from "./shell.js";
 
@@ -17,6 +18,8 @@ const S = {
   content: {},   // unitId -> content | null (нет доступа)
   sub: {},       // unitId -> {answers, status, updatedAt, dirty}
   result: {},    // unitId -> result | null
+  exr: {},       // unitId -> results of exercises the teacher has checked one by one
+  exrVer: 0,
   unsub: [], unitUnsub: {}, resultUnsub: {},
   registering: false,
 };
@@ -26,6 +29,8 @@ let saveTimer = null;
 document.title = COURSE_TITLE;
 document.querySelectorAll("[data-course-title]").forEach((el) => (el.textContent = COURSE_TITLE));
 initShell();
+wireFlashcards();
+protectBook();
 wireUnitNav(document.querySelector("#unit-nav"), () => renderNav());
 
 // ------------------------------------------------------------------ auth
@@ -91,7 +96,7 @@ function stopAll() {
   S.unsub.forEach((u) => u()); S.unsub = [];
   Object.values(S.unitUnsub).forEach((u) => u()); S.unitUnsub = {};
   Object.values(S.resultUnsub).forEach((u) => u()); S.resultUnsub = {};
-  Object.assign(S, { profile: null, group: null, units: [], content: {}, sub: {}, result: {} });
+  Object.assign(S, { profile: null, group: null, units: [], content: {}, sub: {}, result: {}, exr: {} });
 }
 
 let groupUnsub = null;
@@ -112,8 +117,8 @@ const isReleased = (id) => !!S.group?.releasedUnits?.includes(id);
 // Реакция в реальном времени на открытие/закрытие юнита и включение проверки
 function syncUnitSubscriptions() {
   for (const key of Object.keys(S.unitUnsub)) {
-    const id = key.replace(/^sub:/, "");
-    if (!isOpen(id)) { S.unitUnsub[key](); delete S.unitUnsub[key]; delete S.content[id]; delete S.sub[id]; }
+    const id = key.replace(/^(sub|exr):/, "");
+    if (!isOpen(id)) { S.unitUnsub[key](); delete S.unitUnsub[key]; delete S.content[id]; delete S.sub[id]; delete S.exr[id]; }
   }
   for (const id of Object.keys(S.resultUnsub)) {
     if (!isReleased(id)) { S.resultUnsub[id](); delete S.resultUnsub[id]; delete S.result[id]; }
@@ -131,6 +136,10 @@ function ensureUnit(unitId) {
   S.unitUnsub[unitId] = onSnapshot(doc(db, "unitContent", unitId),
     (snap) => { S.content[unitId] = snap.exists() ? snap.data() : null; renderMain(); },
     () => { S.content[unitId] = null; renderMain(); });
+  // results of exercises that the teacher checks one by one
+  S.unitUnsub["exr:" + unitId] = onSnapshot(doc(db, "exerciseResults", subId(unitId, S.user.uid)),
+    (snap) => { S.exr[unitId] = snap.exists() ? snap.data() : null; S.exrVer++; renderMain(); },
+    () => { S.exr[unitId] = null; });
   // Своя работа — тоже в реальном времени (преподаватель может «вернуть на доработку»)
   const key = "sub:" + unitId;
   S.unitUnsub[key] = onSnapshot(doc(db, "submissions", subId(unitId, S.user.uid)), (snap) => {
@@ -168,6 +177,7 @@ function renderNav() {
   renderUnitNav($("#unit-nav"), {
     units: S.units,
     route: route(),
+    empty: "The course units will appear here.",
     state: (u) => {
       if (u.status === "soon") return { locked: true, note: "Coming soon", noteClass: "lock" };
       if (!isOpen(u.id)) return { locked: true, note: "🔒 Locked", noteClass: "lock" };
@@ -221,24 +231,30 @@ function renderMain() {
   const released = isReleased(unit.id);
   const res = released ? S.result[unit.id] : undefined;
   const readOnly = released || sub.status === "submitted";
+  const relEx = S.group.releasedEx?.[unit.id] || [];
+  const viewKey = `${unit.id}/${sec.id}/${readOnly}/${!!res}/${relEx.join(",")}/${S.exrVer}`;
 
   // do not re-render while the student is typing (keeps the cursor in place)
   const active = document.activeElement;
-  if (content.dataset.view === `${unit.id}/${sec.id}/${readOnly}/${!!res}` && active?.dataset?.item && content.contains(active)) {
+  if (content.dataset.view === viewKey && active?.dataset?.item && content.contains(active)) {
     renderUnitBar(unit, sub, released, res);
     return;
   }
-  content.dataset.view = `${unit.id}/${sec.id}/${readOnly}/${!!res}`;
+  content.dataset.view = viewKey;
   content.dataset.unit = unit.id;
   content.innerHTML = `<header class="page-h"><div class="pe">Unit ${unitNum(unit)} &middot; ${unitNum(unit)}.${secIdx}</div>
       <h2>${esc(sec.title)}</h2>${meta.subtitle || sec.subtitle ? `<p class="pl">${esc(meta.subtitle || sec.subtitle)}</p>` : ""}</header>`
-    + renderBlocks(sec.blocks, (ex) => ({
-      answers: sub.answers?.[ex.id] || {},
-      readOnly,
-      auto: res ? (isAuto(ex) ? res.auto?.[ex.id] || {} : null) : undefined,
-      manual: res?.manual?.[ex.id],
-      showPending: !!res,
-    }), `${unitNum(unit)}.${secIdx}`) + pagerHTML(unit, c, sec);
+    + renderBlocks(sec.blocks, (ex) => {
+      const exDone = relEx.includes(ex.id);   // the teacher has checked this exercise
+      return {
+        answers: sub.answers?.[ex.id] || {},
+        readOnly: readOnly || exDone,
+        auto: res ? (isAuto(ex) ? res.auto?.[ex.id] || {} : null) : exDone ? S.exr[unit.id]?.items?.[ex.id] || {} : undefined,
+        manual: res?.manual?.[ex.id],
+        showPending: !!res,
+        tag: isTeacherChecked(ex) && !res ? (exDone ? "Checked" : "Checked by your teacher") : "",
+      };
+    }, `${unitNum(unit)}.${secIdx}`) + pagerHTML(unit, c, sec);
   renderUnitBar(unit, sub, released, res);
 }
 
@@ -351,3 +367,33 @@ const lsKey = (unitId) => `draft:${S.user?.uid}:${unitId}`;
 function writeLocal(unitId, answers) { try { localStorage.setItem(lsKey(unitId), JSON.stringify({ ts: Date.now(), answers })); } catch {} }
 function readLocal(unitId) { try { return JSON.parse(localStorage.getItem(lsKey(unitId))); } catch { return null; } }
 function clearLocal(unitId) { try { localStorage.removeItem(lsKey(unitId)); } catch {} }
+
+// ------------------------------------------------------------------ the book cannot be copied or pasted into
+function protectBook() {
+  document.body.classList.add("protect");
+  const content = document.querySelector("#content");
+  const isField = (el) => el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA");
+  let lastNote = 0;
+  const note = (t) => {
+    if (Date.now() - lastNote < 1500) return;
+    lastNote = Date.now();
+    const el = document.createElement("div");
+    el.className = "toast"; el.textContent = t;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 2500);
+  };
+  ["copy", "cut"].forEach((ev) => content.addEventListener(ev, (e) => { e.preventDefault(); note("Copying is turned off in this course book."); }));
+  content.addEventListener("contextmenu", (e) => { if (!isField(e.target)) e.preventDefault(); });
+  content.addEventListener("dragstart", (e) => e.preventDefault());
+  content.addEventListener("paste", (e) => { e.preventDefault(); note("Pasting is turned off. Please type your answer."); });
+  content.addEventListener("drop", (e) => { e.preventDefault(); note("Pasting is turned off. Please type your answer."); });
+  content.addEventListener("beforeinput", (e) => {
+    if (["insertFromPaste", "insertFromDrop", "insertFromYank", "insertFromPasteAsQuotation"].includes(e.inputType)) {
+      e.preventDefault(); note("Pasting is turned off. Please type your answer.");
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    const k = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && (k === "p" || k === "s")) { e.preventDefault(); note("Printing and saving are turned off in this course book."); }
+  });
+}
