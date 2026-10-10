@@ -4,14 +4,48 @@
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-// Нормализация ответа перед сравнением с ключом
+// Нормализация ответа перед сравнением с ключом:
+// регистр, апострофы, пробелы, знаки препинания и сокращения (don't = do not) не важны
+const CONTR = [[/\bcan't\b|\bcan not\b/g, "cannot"], [/\bwon't\b/g, "will not"], [/\bshan't\b/g, "shall not"],
+  [/n't\b/g, " not"], [/'m\b/g, " am"], [/'re\b/g, " are"], [/'ve\b/g, " have"], [/'ll\b/g, " will"]];
 export function norm(s) {
-  return String(s ?? "")
-    .trim()
+  let t = String(s ?? "")
     .toLowerCase()
     .replace(/[’‘`´]/g, "'")
-    .replace(/\s+/g, " ")
-    .replace(/[.!?;,]+$/, "");
+    .replace(/[“”"«»]/g, " ")
+    .replace(/[,!?;:]/g, " ")
+    .replace(/\.+(\s|$)/g, " ");
+  for (const [re, to] of CONTR) t = t.replace(re, to);
+  return t.replace(/\s+/g, " ").trim();
+}
+
+// Варианты ключа: "(that)" — необязательное слово, "he/she" — любое из слов
+export function expandKey(k) {
+  let out = [String(k ?? "")];
+  for (let guard = 0; guard < 8; guard++) {
+    const next = [];
+    let changed = false;
+    for (const v of out) {
+      const m = v.match(/\(([^()]+)\)/);
+      if (m) { changed = true; next.push(v.replace(m[0], m[1]), v.replace(m[0], "")); }
+      else next.push(v);
+    }
+    out = next;
+    if (!changed) break;
+  }
+  const slash = /([A-Za-z'’-]+(?:\/[A-Za-z'’-]+)+)/;
+  for (let guard = 0; guard < 6; guard++) {
+    const next = [];
+    let changed = false;
+    for (const v of out) {
+      const m = v.match(slash);
+      if (m) { changed = true; for (const w of m[1].split("/")) next.push(v.replace(m[1], w)); }
+      else next.push(v);
+    }
+    out = next;
+    if (!changed || out.length > 400) break;
+  }
+  return out;
 }
 
 export const KIND_LABEL = { gap: "Gap fill", match: "Matching", mcq: "Multiple choice", open: "Open answer" };
@@ -41,10 +75,18 @@ export function keyText(key) {
   return Array.isArray(key) ? key.join(" / ") : String(key ?? "");
 }
 
+// the answer shown to the student after checking: the first accepted variant
+export const firstKey = (key) => expandKey(Array.isArray(key) ? key[0] ?? "" : key ?? "")[0].replace(/\s+/g, " ").trim();
+
 export function isCorrect(given, key) {
   if (given == null || norm(given) === "") return false;
-  const variants = Array.isArray(key) ? key : [key];
-  return variants.some((k) => norm(k) === norm(given));
+  const variants = (Array.isArray(key) ? key : [key]).flatMap(expandKey);
+  // "'d" can mean "had" or "would": try both
+  let gs = [norm(given)];
+  for (let i = 0; i < 3 && gs.some((x) => /'d\b/.test(x)); i++)
+    gs = gs.flatMap((x) => (/'d\b/.test(x) ? [x.replace(/'d\b/, " had"), x.replace(/'d\b/, " would")] : [x])).map((x) => x.replace(/\s+/g, " "));
+  const keysN = new Set(variants.map(norm));
+  return gs.some((x) => keysN.has(x));
 }
 
 // Автопроверка: answers = {exId:{itemId:value}}, keys = {exId:{itemId:answer}}
@@ -58,7 +100,7 @@ export function gradeAuto(content, answers, keys) {
       const given = answers?.[ex.id]?.[it.id] ?? "";
       const key = keys?.[ex.id]?.[it.id];
       const ok = isCorrect(given, key);
-      items[ex.id][it.id] = { given, ok, correct: keyText(key) };
+      items[ex.id][it.id] = { given, ok, correct: firstKey(key) };
       max += 1;
       if (ok) score += 1;
     }
@@ -74,7 +116,7 @@ export function gradeExercise(ex, answers, keys) {
     const given = answers?.[it.id] ?? "";
     const key = keys?.[it.id];
     const ok = isCorrect(given, key);
-    items[it.id] = { given, ok, correct: keyText(key) };
+    items[it.id] = { given, ok, correct: firstKey(key) };
     if (ok) score += 1;
   }
   return { items, score, max: (ex.items || []).length };
@@ -167,7 +209,7 @@ export function renderExercise(ex, o = {}) {
         const cls = r && val === L ? (r.ok ? "ok" : "bad") : (o.key && o.key[it.id] === L ? "right" : "");
         return `<label class="${cls}"><input type="radio" name="${esc(name)}" value="${L}" ${val === L ? "checked" : ""} ${attrs}><span class="l">${L}</span><span>${t}</span></label>`;
       }).join("");
-      body = `${it.text}<div class="mcq">${opts}</div>${corr}`;
+      body = `${it.text}<div class="mcq ${ex.columns === 2 ? "cols2" : ""}">${opts}</div>${corr}`;
     } else if (ex.kind === "open") {
       const m = o.manual?.[it.id];
       const max = itemMax(ex, it);
@@ -190,7 +232,7 @@ export function renderExercise(ex, o = {}) {
   }).join("\n");
 
   const count = (ex.items || []).length;
-  let body = `<ol class="items ${ex.layout === "two" ? "two" : ""}">${items}</ol>`;
+  let body = `<ol class="items ${ex.layout === "two" ? "two" : ""} ${ex.wide ? "wide" : ""}">${items}</ol>`;
   if (ex.kind === "match" && ex.display === "letters") {
     // as in the printed workbook: type the letter next to each phrase, meanings listed on the right
     const left = (ex.items || []).map((it) => {

@@ -385,3 +385,20 @@ mark.lt.sp{background:#fff4d6;border-bottom-color:var(--gold)}
 /* word in capitals for word formation */
 .stem{font-family:var(--sans);font-weight:700;font-size:13px;letter-spacing:.06em;color:var(--navy);background:var(--gold3);border:1px solid #ecd3a4;border-radius:4px;padding:1px 6px;margin-left:6px;white-space:nowrap}
 body.teacher .stem{color:var(--plum)}
+/* multiple choice in two columns; full-sentence answers */
+.mcq.cols2{grid-template-columns:1fr 1fr;column-gap:14px}
+@media (max-width:640px){.mcq.cols2{grid-template-columns:1fr}}
+.items.wide .li-t{display:block}
+.items.wide input.gap{display:block;width:100%;max-width:100%;margin-top:6px;text-align:left}
+/* grammar rule boxes */
+.rule .rule-h{display:flex;align-items:center;gap:10px;font-family:var(--serif);font-weight:700;font-size:17px;color:var(--navy);margin:0 0 8px}
+.rule .rule-tag{font-family:var(--sans);font-size:10.5px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;background:var(--navy);color:#fff;border-radius:4px;padding:3px 8px}
+body.teacher .rule .rule-tag{background:var(--plum)}
+.rule .rule-b p{margin:0 0 9px}
+.rule .rule-b ul{margin:0 0 10px;padding-left:20px}
+.rule .rule-b li{margin-bottom:5px}
+.rule .eg{background:#fff;border:1px solid #d9e6f2;border-radius:8px;padding:8px 12px;font-style:italic}
+.rule table.g{margin:6px 0 12px;font-size:14.4px;background:#fff}
+.rule table.g th{background:#eef4fb;color:var(--navy)}
+.rule table.g td{background:#fff}
+@media (max-width:640px){.rule table.g{display:block;overflow-x:auto}}
