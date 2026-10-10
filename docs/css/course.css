@@ -402,3 +402,15 @@ body.teacher .rule .rule-tag{background:var(--plum)}
 .rule table.g th{background:#eef4fb;color:var(--navy)}
 .rule table.g td{background:#fff}
 @media (max-width:640px){.rule table.g{display:block;overflow-x:auto}}
+/* short recordings inside an exercise */
+.items li.has-play{display:flex;gap:12px;align-items:center;margin-bottom:12px}
+.items li.has-play .li-body{flex:1;min-width:0}
+.iplay{flex:none;width:36px;height:36px;border-radius:50%;border:0;background:var(--navy);display:grid;place-items:center;cursor:pointer;margin-top:-4px;transition:transform .1s}
+body.teacher .iplay{background:var(--plum)}
+.iplay .tri{width:0;height:0;border-style:solid;border-width:7px 0 7px 12px;border-color:transparent transparent transparent #fff;margin-left:3px}
+.iplay:hover{transform:scale(1.06)}
+.iplay.on{background:var(--gold)}
+.iplay.on .tri{width:10px;height:12px;border:0;border-left:3px solid #fff;border-right:3px solid #fff;margin-left:0}
+.iplay.used{background:#c9ccd4;cursor:not-allowed}
+.iplay.missing{background:#e3c2c2}
+.items.quotes .li-t,.items.quotes .m-word{font-family:var(--serif);font-style:italic;font-size:16px}

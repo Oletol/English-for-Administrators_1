@@ -191,6 +191,7 @@ export function renderExercise(ex, o = {}) {
     const corr = r && !r.ok && r.correct ? `<span class="corr">Correct: ${esc(showAns(ex, r.correct))}</span>` : "";
     const keyHint = o.key && o.key[it.id] !== undefined ? `<span class="keyhint">✓ ${esc(showAns(ex, keyText(o.key[it.id])))}</span>` : "";
     let body = "";
+    const play = it.audio ? itemPlayButton(it.audio, ex.once) : "";
 
     if (ex.kind === "gap") {
       const size = it.size || ex.size || 14;
@@ -199,7 +200,7 @@ export function renderExercise(ex, o = {}) {
       body += corr + keyHint;
     } else if (ex.kind === "match") {
       const opts = (ex.options || []).map((op) =>
-        `<option value="${esc(op.id)}" ${val === op.id ? "selected" : ""}>${esc(op.id)}. ${esc(stripTags(op.text))}</option>`).join("");
+        `<option value="${esc(op.id)}" ${val === op.id ? "selected" : ""}>${ex.plain ? "" : esc(op.id) + ". "}${esc(stripTags(op.text))}</option>`).join("");
       body = `<span class="m-word">${it.text}</span> <select class="gap ${mark}" ${attrs}><option value="">choose…</option>${opts}</select>${corr}${keyHint}`;
     } else if (ex.kind === "mcq") {
       const name = `${ex.id}__${it.id}`;
@@ -228,11 +229,11 @@ export function renderExercise(ex, o = {}) {
       const wc = minW ? `<div class="wc"><span class="wc-n" data-wc="${esc(ex.id)}:${esc(it.id)}">${countWords(val)}</span> words <span class="muted">· at least ${minW}</span></div>` : "";
       body = `${it.text}<textarea class="open-answer" rows="${it.rows || 5}" ${attrs} ${NOAUTO} placeholder="${o.readOnly ? "" : "Type your answer here…"}">${esc(val)}</textarea>${wc}${o.itemExtra ? o.itemExtra(it.id) : ""}${grade}`;
     }
-    return `<li>${body}</li>`;
+    return `<li${play ? ' class="has-play"' : ""}>${play}${play ? `<div class="li-body">${body}</div>` : body}</li>`;
   }).join("\n");
 
   const count = (ex.items || []).length;
-  let body = `<ol class="items ${ex.layout === "two" ? "two" : ""} ${ex.wide ? "wide" : ""}">${items}</ol>`;
+  let body = `<ol class="items ${ex.layout === "two" ? "two" : ""} ${ex.wide ? "wide" : ""} ${ex.quotes ? "quotes" : ""}">${items}</ol>`;
   if (ex.kind === "match" && ex.display === "letters") {
     // as in the printed workbook: type the letter next to each phrase, meanings listed on the right
     const left = (ex.items || []).map((it) => {
@@ -259,10 +260,17 @@ export function renderExercise(ex, o = {}) {
 function showAns(ex, v) {
   if (ex.kind !== "match") return v;
   const op = (ex.options || []).find((o) => o.id === v);
-  return op ? `${v}. ${stripTags(op.text)}` : v;
+  return op ? (ex.plain ? stripTags(op.text) : `${v}. ${stripTags(op.text)}`) : v;
 }
 
-function stripTags(s) { return String(s ?? "").replace(/<[^>]*>/g, ""); }
+const ENT = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", rsquo: "’", lsquo: "‘", ldquo: "“", rdquo: "”",
+  ndash: "–", mdash: "—", hellip: "…", middot: "·", pound: "£", euro: "€", times: "×" };
+// plain text for <option> labels and answers: no tags, entities decoded (esc() is applied afterwards)
+function stripTags(s) {
+  return String(s ?? "").replace(/<[^>]*>/g, "")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n))
+    .replace(/&([a-z]+);/g, (m, n) => ENT[n] ?? m);
+}
 
 // Значение поля ответа из DOM-элемента
 export function readInput(el) {
@@ -432,3 +440,30 @@ function renderAudio(b) {
 }
 
 export const countWords = (t) => (String(t || "").match(/[A-Za-z]+(?:['’][A-Za-z]+)?/g) || []).length;
+
+// ------------------------------------------------------------------ short recordings inside an exercise
+// item.audio = "media/u1/file.mp3"; exercise.once = true: a student can play each recording only once
+const isTeacherPage = () => typeof document !== "undefined" && document.body?.classList.contains("teacher");
+function playedBefore(src) { try { return localStorage.getItem("played:" + src) === "1"; } catch { return false; } }
+function markPlayed(src) { try { localStorage.setItem("played:" + src, "1"); } catch {} }
+function itemPlayButton(src, once) {
+  const s = mediaSrc(src);
+  const used = once && !isTeacherPage() && playedBefore(s);
+  return `<button type="button" class="iplay ${used ? "used" : ""}" data-src="${s}" ${once ? 'data-once="1"' : ""} ${used ? "disabled" : ""}
+    aria-label="Play the recording" title="${used ? "You have already listened to this recording" : "Play"}"><span class="tri"></span></button>`;
+}
+let curAudio = null, curBtn = null;
+if (typeof document !== "undefined") document.addEventListener("click", (e) => {
+  const b = e.target.closest?.(".iplay");
+  if (!b || b.disabled) return;
+  e.preventDefault();
+  const once = b.dataset.once === "1" && !isTeacherPage();
+  if (curAudio && curBtn === b && !curAudio.paused) { if (!once) { curAudio.pause(); b.classList.remove("on"); } return; }
+  if (curAudio) { curAudio.pause(); curBtn?.classList.remove("on"); }
+  const src = b.dataset.src;
+  curAudio = new Audio(src); curBtn = b;
+  b.classList.add("on");
+  curAudio.onended = () => { b.classList.remove("on"); if (once) { b.disabled = true; b.classList.add("used"); b.title = "You have already listened to this recording"; } };
+  curAudio.onerror = () => { b.classList.remove("on"); b.classList.add("missing"); b.title = "This recording has not been added yet"; };
+  curAudio.play().then(() => { if (once) markPlayed(src); }).catch(() => {});
+});
