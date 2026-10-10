@@ -53,7 +53,7 @@ function toast(t, ms = 3500) {
   setTimeout(() => el.remove(), ms);
 }
 async function guard(fn) {
-  try { return await fn(); } catch (e) { console.error(e); toast("Error: " + friendlyError(e), 6000); }
+  try { T.lastError = ""; return await fn(); } catch (e) { console.error(e); T.lastError = friendlyError(e); toast("Error: " + T.lastError, 6000); }
 }
 
 // ------------------------------------------------------------------ auth
@@ -629,7 +629,7 @@ function viewContent() {
     Importing a unit with an existing <code>id</code> replaces it; students' answers are kept.</p>
     <div class="row"><input type="file" id="import-file" accept=".json,application/json"></div>
     <textarea class="json" id="import-text" placeholder='{"units":[{"id":"u1","order":1,"title":"…","sections":[…]}]}'></textarea>
-    <div class="row"><button class="btn primary" data-act="import">Import</button></div>
+    <div class="row"><button class="btn primary" data-act="import" id="import-btn">Import</button><span id="import-status" class="muted">${T.importStatus || ""}</span></div>
   </div>
   <table class="t"><tr><th>#</th><th>id</th><th>Unit</th><th>Status</th><th></th></tr>${rows || `<tr><td colspan="5" class="muted">The course is empty. Import a JSON file.</td></tr>`}</table>`;
 }
@@ -689,7 +689,17 @@ function splitUnit(u) {
   return { meta, content: { sections }, tests, keys: { exercises: keys, notes, tests: testKeys } };
 }
 
+function setImportStatus(html) {
+  T.importStatus = html;
+  const el = $("#import-status");
+  if (el) el.innerHTML = html;
+}
 async function importCourse() {
+  const btn = $("#import-btn");
+  if (btn) btn.disabled = true;
+  setImportStatus("Importing…");
+  // if the database does not confirm the import, say so instead of waiting silently
+  const slow = setTimeout(() => setImportStatus("<b>Still waiting for the database…</b> Check the internet connection. If this message stays, reload the page and import again."), 20000);
   await guard(async () => {
     const raw = $("#import-text").value.trim();
     if (!raw) throw new Error("Paste JSON or choose a file.");
@@ -709,9 +719,18 @@ async function importCourse() {
     for (const l of list) delete T.unitData[l.id];
     T.testsLoaded = false;
     $("#import-text").value = "";
+    const summary = parts.filter((p) => p.content).map((p, i) => {
+      const u = list[parts.indexOf(p)];
+      const nEx = p.content.sections.reduce((n, sec) => n + sec.blocks.filter((b) => b.type === "exercise" || b.numbered).length, 0);
+      return `Unit ${u.order || i + 1}: ${p.content.sections.length} ${p.content.sections.length === 1 ? "section" : "sections"}, ${nEx} exercises`;
+    }).join("; ");
+    setImportStatus(`<b style="color:var(--ok)">✓ Imported ${parts.length} units at ${fmtTime(new Date())}.</b> ${esc(summary)}`);
     toast(`Units imported: ${parts.length}`);
     ctxKey = ""; subscribeCtx(); render(true);
   });
+  clearTimeout(slow);
+  if (btn) btn.disabled = false;
+  if (T.importStatus === "Importing…") setImportStatus(`<b style="color:var(--bad)">The import did not work:</b> ${esc(T.lastError || "unknown error")}`);
 }
 
 async function deleteUnit(u) {
