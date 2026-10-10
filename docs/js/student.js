@@ -8,9 +8,10 @@ import {
 import { COURSE_TITLE } from "./firebase-config.js";
 import {
   esc, renderBlocks, readInput, fmtTime, friendlyError, authFormHTML, wireAuthForm, subId, exercisesOf, isAuto,
-  isTeacherChecked, wireFlashcards,
+  isTeacherChecked, wireFlashcards, countWords,
 } from "./common.js";
 import { initShell, renderUnitNav, wireUnitNav } from "./shell.js";
+import { feedbackHTML } from "./writing.js";
 
 const $ = (s) => document.querySelector(s);
 const S = {
@@ -212,6 +213,7 @@ function renderMain() {
   if (r.unit === "test") { renderTest(r.section); return; }
   const unit = S.units.find((u) => u.id === r.unit);
   const content = $("#content");
+  content.dataset.test = "";
   if (!unit) {
     const open = S.units.filter((u) => isOpen(u.id) && u.status !== "soon");
     document.title = COURSE_TITLE;
@@ -248,7 +250,7 @@ function renderMain() {
   const res = released ? S.result[unit.id] : undefined;
   const readOnly = released || sub.status === "submitted";
   const relEx = S.group.releasedEx?.[unit.id] || [];
-  const viewKey = `${unit.id}/${sec.id}/${readOnly}/${!!res}/${relEx.join(",")}/${S.exrVer}`;
+  const viewKey = `${unit.id}/${sec.id}/${readOnly}/${!!res}/${relEx.join(",")}/${(S.group.feedbackEx?.[unit.id] || []).join(",")}/${S.exrVer}`;
 
   // do not re-render while the student is typing (keeps the cursor in place)
   const active = document.activeElement;
@@ -262,13 +264,17 @@ function renderMain() {
       <h2>${esc(sec.title)}</h2>${meta.subtitle || sec.subtitle ? `<p class="pl">${esc(meta.subtitle || sec.subtitle)}</p>` : ""}</header>`
     + renderBlocks(sec.blocks, (ex) => {
       const exDone = relEx.includes(ex.id);   // the teacher has checked this exercise
+      const fbOn = (S.group.feedbackEx?.[unit.id] || []).includes(ex.id);
+      const fb = fbOn && !res ? S.exr[unit.id]?.feedback?.[ex.id] : null;
+      const fbAt = S.exr[unit.id]?.feedbackAt?.[ex.id];
       return {
+        itemExtra: fb ? (itemId) => feedbackHTML(fb[itemId], { checkedAt: fmtTime(fbAt) }) : null,
         answers: sub.answers?.[ex.id] || {},
         readOnly: readOnly || exDone,
         auto: res ? (isAuto(ex) ? res.auto?.[ex.id] || {} : null) : exDone ? S.exr[unit.id]?.items?.[ex.id] || {} : undefined,
         manual: res?.manual?.[ex.id],
         showPending: !!res,
-        tag: isTeacherChecked(ex) && !res ? (exDone ? "Checked" : "Checked by your teacher") : "",
+        tag: ex.check === "teacher" && !res ? (exDone ? "Checked" : fb ? "Feedback ready – you can correct your text" : "Checked by your teacher") : "",
       };
     }, `${unitNum(unit)}.${secIdx}`) + pagerHTML(unit, c, sec);
   renderUnitBar(unit, sub, released, res);
@@ -308,6 +314,8 @@ $("#content").addEventListener("change", onAnswer);
 function onAnswer(e) {
   const el = e.target;
   if (!el.dataset?.item || el.disabled) return;
+  const wcEl = document.querySelector(`[data-wc="${CSS.escape(el.dataset.ex + ":" + el.dataset.item)}"]`);
+  if (wcEl) wcEl.textContent = countWords(el.value);
   if ($("#content").dataset.test) { onTestAnswer(el); return; }
   const unitId = $("#content").dataset.unit;
   const sub = S.sub[unitId];

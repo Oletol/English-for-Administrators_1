@@ -345,3 +345,25 @@ body.protect #content input,body.protect #content textarea{-webkit-user-select:t
 .au-b audio{width:100%;max-width:460px}
 .au-n{font-size:12.5px;color:var(--mut);margin-top:7px}
 body.protect #content img{-webkit-user-drag:none;pointer-events:none}
+
+/* ---------------- free writing: word count and feedback ---------------- */
+.wc{font-size:12.5px;color:var(--ink2);margin:2px 0 6px}
+.wc-n{font-family:var(--mono);font-weight:700;color:var(--navy)}
+.wc.short .wc-n{color:var(--warn)}
+.wfb{border:1px solid #cfe0f0;background:#f7fbff;border-radius:var(--r2);padding:12px 15px;margin:6px 0 10px;font-size:14.3px;line-height:1.55}
+.wfb-h{font-size:10.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--navy);margin-bottom:6px}
+.wfb-h .muted{letter-spacing:0;text-transform:none;font-weight:600}
+.wfb-text{font-family:var(--serif);font-size:15.5px;background:#fff;border:1px solid var(--line2);border-radius:7px;padding:8px 11px;margin-bottom:8px;white-space:pre-wrap}
+mark.lt{background:#fde8e4;border-bottom:2px solid var(--bad);color:inherit;padding:0 1px;border-radius:2px}
+mark.lt.sp{background:#fff4d6;border-bottom-color:var(--gold)}
+.wfb-issues{margin:0 0 8px;padding-left:20px}
+.wfb-issues li{margin-bottom:3px}
+.wfb-issues .fix{color:var(--ok);font-weight:600}
+.wfb-ok{color:var(--ok);margin:0 0 6px}
+.wfb-v{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:4px 0}
+.lvchip{font-size:11.5px;border-radius:12px;padding:1px 8px;border:1px solid var(--line);background:#fff}
+.lv-B2,.lv-C1,.lv-C2{background:var(--ok2);border-color:#b9dcc7;color:var(--ok)}
+.wfb-line{margin:4px 0}
+.wfb-line small{color:var(--mut);font-size:10.5px}
+.wfb-src{font-size:11.5px;color:var(--mut);margin:6px 0 0}
+.cue{display:block;font-family:var(--sans);font-style:italic;font-size:14px;color:var(--plum);margin-top:1px}

@@ -182,7 +182,9 @@ export function renderExercise(ex, o = {}) {
       } else if (o.auto !== undefined && o.showPending) {
         grade = `<div class="feedback muted">Waiting for the teacher's assessment</div>`;
       }
-      body = `${it.text}<textarea class="open-answer" rows="${it.rows || 5}" ${attrs} ${NOAUTO} placeholder="${o.readOnly ? "" : "Type your answer here…"}">${esc(val)}</textarea>${grade}`;
+      const minW = it.minWords || ex.minWords;
+      const wc = minW ? `<div class="wc"><span class="wc-n" data-wc="${esc(ex.id)}:${esc(it.id)}">${countWords(val)}</span> words <span class="muted">· at least ${minW}</span></div>` : "";
+      body = `${it.text}<textarea class="open-answer" rows="${it.rows || 5}" ${attrs} ${NOAUTO} placeholder="${o.readOnly ? "" : "Type your answer here…"}">${esc(val)}</textarea>${wc}${o.itemExtra ? o.itemExtra(it.id) : ""}${grade}`;
     }
     return `<li>${body}</li>`;
   }).join("\n");
@@ -204,7 +206,7 @@ export function renderExercise(ex, o = {}) {
   }
   const tag = o.tag ? `<span class="ex-tag">${o.tag}</span>` : "";
   return `${o.before || ""}<section class="ex" id="ex-${esc(ex.id)}">
-  <div class="ex-h">${o.num ? `<span class="ex-n">${esc(o.num)}</span>` : ""}<span class="ex-t">${esc(ex.title || "")}</span><span class="ex-c">${count} ${count === 1 ? "item" : "items"}</span>${tag}${scoreLine}</div>
+  <div class="ex-h">${o.num ? `<span class="ex-n">${esc(o.num)}</span>` : ""}<span class="ex-t">${esc(ex.title || "")}</span>${tag}${scoreLine}</div>
   ${ex.rubric ? `<p class="ex-i">${ex.rubric}</p>` : ""}
   ${ex.display === "letters" ? "" : options}
   ${body}
@@ -308,7 +310,7 @@ export function renderFlashcards(b) {
   const cards = b.cards || [];
   const data = esc(JSON.stringify(cards));
   return `<section class="fc" data-cards="${data}" data-i="0">
-    <div class="fc-h"><span class="ic">🃏</span><span class="ex-t">${esc(b.title || "Flashcards")}</span><span class="ex-c">${cards.length} words</span></div>
+    <div class="fc-h"><span class="ic">🃏</span><span class="ex-t">${esc(b.title || "Flashcards")}</span></div>
     ${b.rubric ? `<p class="ex-i">${b.rubric}</p>` : ""}
     <div class="fc-stage">${fcCard(cards[0], 0, cards.length)}</div>
     <div class="fc-nav">
@@ -382,3 +384,5 @@ function renderAudio(b) {
       ${b.note ? `<div class="au-n">${esc(b.note)}</div>` : ""}
     </div></div>`;
 }
+
+export const countWords = (t) => (String(t || "").match(/[A-Za-z]+(?:['’][A-Za-z]+)?/g) || []).length;

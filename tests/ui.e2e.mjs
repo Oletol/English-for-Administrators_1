@@ -13,6 +13,16 @@ const course = readFileSync(new URL("../content-private/test-fixture.json", impo
 const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" }).catch(() => chromium.launch());
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
 await ctx.route("**/js/fb.js", (r) => r.fulfill({ contentType: "text/javascript", body: mock }));
+// LanguageTool: подставной ответ (в песочнице нет доступа к api.languagetool.org)
+let ltCalls = 0;
+await ctx.route("https://api.languagetool.org/**", async (r) => {
+  ltCalls++;
+  const text = new URLSearchParams(r.request().postData()).get("text") || "";
+  const i = text.indexOf("has went");
+  const matches = i < 0 ? [] : [{ offset: i, length: 8, message: "The past participle of 'go' is 'gone'.", shortMessage: "Wrong verb form",
+    replacements: [{ value: "has gone" }], rule: { issueType: "grammar", category: { name: "Grammar" } } }];
+  await r.fulfill({ contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify({ matches }) });
+});
 const errors = [];
 const page = async (url) => {
   const p = await ctx.newPage();
@@ -194,6 +204,29 @@ await s1.click('.sb-uh[data-unit="u1"]');
 await s1.click('.sb-item:has-text("Warm-up")');
 await s1.waitForSelector("#submit-unit");
 
+step("1.1.5: развёрнутые ответы, проверка грамматики и лексики, исправление");
+await s1.click('.sb-item:has-text("Warm-up")');
+await s1.waitForSelector("#ex-m5");
+assert.equal(await s1.locator("#ex-m5 .ex-c").count(), 0, "нет счётчика пунктов в заголовке");
+const t1 = "The person I send messages to most often is my sister, who has went to study in Kazan, so we keep in touch every evening.";
+await s1.fill(sel("m5", "1"), t1);
+assert.equal((await s1.textContent('[data-wc="m5:1"]')).trim(), String(t1.split(/\s+/).length));
+await s1.fill(sel("m5", "2"), "I usually reply to messages at once, but when I am at a lecture I mute the group chat and go offline for an hour.");
+await s1.waitForTimeout(2500);
+await t.evaluate(() => { location.hash = "#u1/warmup"; });
+await t.waitForSelector('[data-act="check-writing"][data-ex="m5"]');
+await t.click('[data-act="check-writing"][data-ex="m5"]');
+await s1.waitForSelector("#ex-m5 .wfb", { timeout: 15000 });
+assert.ok(ltCalls >= 1, "LanguageTool вызывался");
+assert.equal(await s1.locator("#ex-m5 mark.lt").first().textContent(), "has went");
+const fbText = await s1.textContent("#ex-m5 .wfb");
+assert.ok(fbText.includes("has gone"), "предложено исправление");
+assert.ok(/Unit phrases used \(\d+ of \d+\): .*keep in touch/.test(fbText), "учтены фразы юнита");
+assert.equal(await s1.locator(sel("m5", "1")).isDisabled(), false, "текст можно исправить");
+await s1.locator("#ex-m5 li").first().screenshot({ path: `${SHOTS}/20-writing-feedback.png` });
+await s1.fill(sel("m5", "1"), t1.replace("has went", "has gone"));
+await s1.locator("#save-state", { hasText: /Saved|saved/ }).waitFor({ timeout: 5000 });
+
 step("Преподаватель видит черновик в реальном времени");
 await t.selectOption("#ctx-unit", "u1");
 await t.click('a[href="#tools/works"]');
@@ -227,8 +260,8 @@ step("Преподаватель оценивает открытый ответ"
 await t.waitForSelector("text=Boris Petrov");
 await t.click("tr:has-text('Anna Ivanova') [data-act=select-student]");
 await t.waitForSelector("#detail .g-score");
-await t.fill("#detail .g-score", "8");
-await t.fill("#detail .g-comment", "Good topic sentence; add one more example.");
+await t.fill('#detail .g-score[data-ex="w2"]', "8");
+await t.fill('#detail .g-comment[data-ex="w2"]', "Good topic sentence; add one more example.");
 await t.click("#detail [data-act=save-grades] >> nth=0");
 await t.waitForSelector("text=Marks saved");
 await shot(t, "03-teacher-works");

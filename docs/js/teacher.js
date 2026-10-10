@@ -8,9 +8,10 @@ import {
 import { COURSE_TITLE } from "./firebase-config.js";
 import {
   esc, renderBlocks, renderExercise, exercisesOf, isAuto, gradeAuto, buildResult, keyText, norm,
-  fmtTime, friendlyError, authFormHTML, wireAuthForm, subId, KIND_LABEL, isTeacherChecked, gradeExercise, wireFlashcards,
+  fmtTime, friendlyError, authFormHTML, wireAuthForm, subId, KIND_LABEL, isTeacherChecked, gradeExercise, wireFlashcards, isManual,
 } from "./common.js";
 import { initShell, renderUnitNav, wireUnitNav } from "./shell.js";
+import { loadVocab, grammarCheck, vocabProfile, unitVocabulary, feedbackHTML, sleep } from "./writing.js";
 
 const $ = (s) => document.querySelector(s);
 const ls = {
@@ -20,7 +21,7 @@ const ls = {
 const T = {
   user: null, groups: [], units: [], users: [], usersLoaded: false,
   gid: ls.get("gid", ""), unitId: ls.get("unit", ""),
-  students: [], subs: [], results: {},
+  students: [], subs: [], results: {}, exr: {},
   unitData: {},          // unitId -> {content, keys, notes}
   selected: null,        // student uid opened in "Student work"
   includeDrafts: false,
@@ -78,7 +79,7 @@ onAuthStateChanged(auth, async (user) => {
   $("#me-email").textContent = user.email;
 
   T.unsub.push(onSnapshot(collection(db, "groups"), (snap) => {
-    T.groups = snap.docs.map((d) => ({ id: d.id, openUnits: [], releasedUnits: [], releasedEx: {}, tests: {}, ...d.data() }))
+    T.groups = snap.docs.map((d) => ({ id: d.id, openUnits: [], releasedUnits: [], releasedEx: {}, feedbackEx: {}, tests: {}, ...d.data() }))
       .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
     if (!T.groups.find((g) => g.id === T.gid)) T.gid = T.groups[0]?.id || "";
     fillCtx(); subscribeCtx(); render();
@@ -121,6 +122,10 @@ function subscribeCtx() {
   loadUnitData(T.unitId).then(render);
   T.ctxUnsub.push(onSnapshot(query(collection(db, "submissions"), where("groupId", "==", T.gid), where("unitId", "==", T.unitId)), (snap) => {
     T.subs = snap.docs.map((d) => d.data());
+    render();
+  }));
+  T.ctxUnsub.push(onSnapshot(query(collection(db, "exerciseResults"), where("groupId", "==", T.gid), where("unitId", "==", T.unitId)), (snap) => {
+    T.exr = Object.fromEntries(snap.docs.map((d) => [d.data().uid, d.data()]));
     render();
   }));
   T.ctxUnsub.push(onSnapshot(query(collection(db, "results"), where("groupId", "==", T.gid), where("unitId", "==", T.unitId)), (snap) => {
@@ -220,8 +225,8 @@ function viewUnit(r) {
   return bar + pageHead(`Unit ${n} &middot; ${n}.${i + 1}`, esc(sec.title), esc(meta.subtitle || sec.subtitle || ""))
     + renderBlocks(blocks, (ex) => ({
       key: d.keys[ex.id] || {}, readOnly: true,
-      tag: isTeacherChecked(ex) ? "Checked by the teacher" : "",
-      before: isTeacherChecked(ex) && g ? exerciseBar(u, ex, g) : "",
+      tag: ex.check === "teacher" ? (isManual(ex) ? "Writing check by the teacher" : "Checked by the teacher") : "",
+      before: ex.check === "teacher" && g ? (isManual(ex) ? writingBar(u, ex, g) : exerciseBar(u, ex, g)) : "",
     }), `${n}.${i + 1}`)
     + `<nav class="pager">
       ${prev ? `<a class="pg" href="#${u.id}/${prev.id}"><span class="d">Previous</span><span class="t">${n}.${i} ${esc(prev.title)}</span></a>` : ""}
@@ -263,6 +268,51 @@ async function checkExercise(gid, unitId, exId) {
     batch.update(doc(db, "groups", gid), { [`releasedEx.${unitId}`]: arrayUnion(exId) });
     await batch.commit();
     toast(`Exercise checked for ${subs.length} ${subs.length === 1 ? "student" : "students"}. They can see their results now.`);
+  });
+}
+
+// Free writing ("kind": "open", "check": "teacher"): the check gives feedback, the text stays editable
+function writingBar(u, ex, g) {
+  const done = (g.feedbackEx?.[u.id] || []).includes(ex.id);
+  return `<div class="ex-bar"><span>Group <b>${esc(g.name)}</b>: <span class="pill ${done ? "on" : "off"}">${done ? "feedback shown" : "not checked yet"}</span></span>
+    <span class="sp" style="flex:1"></span>
+    <span id="wcheck-progress" class="muted"></span>
+    <button class="btn small good" data-act="check-writing" data-unit="${esc(u.id)}" data-ex="${esc(ex.id)}" ${g.openUnits.includes(u.id) ? "" : "disabled"}>${done ? "Check again" : "Check the writing now"}</button>
+    ${done ? `<button class="btn small danger" data-act="hide-writing" data-unit="${esc(u.id)}" data-ex="${esc(ex.id)}">Hide feedback</button>` : ""}
+  </div>`;
+}
+
+async function checkWriting(gid, unitId, exId) {
+  await guard(async () => {
+    const { content } = await loadUnitData(unitId, true);
+    const ex = exercisesOf(content).find((e) => e.id === exId);
+    const subs = (await getDocs(query(collection(db, "submissions"), where("groupId", "==", gid), where("unitId", "==", unitId)))).docs.map((d) => d.data())
+      .filter((s) => Object.values(s.answers?.[exId] || {}).some((v) => String(v).trim()));
+    if (!confirm(`Check the writing in “${ex.title}”?\nStudents with answers: ${subs.length}.\nThe texts are sent to LanguageTool for the grammar check (about 3 seconds per student). Students will see the feedback and can correct their texts.`)) return;
+    const V = await loadVocab();
+    const phrases = unitVocabulary(content);
+    let n = 0, ltFailed = 0;
+    for (const s of subs) {
+      n++;
+      const prog = document.querySelector("#wcheck-progress");
+      if (prog) prog.textContent = `Checking ${n} of ${subs.length}…`;
+      const texts = s.answers[exId] || {};
+      let issues = {}, grammarError = false;
+      try { issues = await grammarCheck(texts); } catch (e) { console.warn(e); grammarError = true; ltFailed++; }
+      const fb = {};
+      for (const it of ex.items || []) {
+        const text = String(texts[it.id] || "");
+        if (!text.trim()) continue;
+        fb[it.id] = { text, issues: issues[it.id] || [], grammarError, vocab: vocabProfile(text, V, phrases), unitTotal: phrases.length };
+      }
+      await setDoc(doc(db, "exerciseResults", subId(unitId, s.uid)), {
+        uid: s.uid, groupId: gid, unitId,
+        feedback: { [exId]: fb }, feedbackAt: { [exId]: serverTimestamp() },
+      }, { merge: true });
+      if (n < subs.length && !grammarError) await sleep(3200);   // LanguageTool: at most 20 requests a minute
+    }
+    await updateDoc(doc(db, "groups", gid), { [`feedbackEx.${unitId}`]: arrayUnion(exId) });
+    toast(ltFailed ? `Done. The grammar check was not available for ${ltFailed} of ${subs.length}; the vocabulary check worked.` : `Done: ${subs.length} texts checked. Students can see the feedback now.`, 7000);
   });
 }
 
@@ -333,6 +383,8 @@ document.addEventListener("click", (e) => {
     }),
     "release": () => releaseUnit(T.gid, u),
     "check-ex": () => checkExercise(T.gid, u, b.dataset.ex),
+    "check-writing": () => checkWriting(T.gid, u, b.dataset.ex),
+    "hide-writing": () => guard(async () => updateDoc(doc(db, "groups", T.gid), { [`feedbackEx.${u}`]: arrayRemove(b.dataset.ex) })),
     "uncheck-ex": () => guard(async () => {
       if (!confirm("Hide the results of this exercise from the students? They will be able to change their answers again.")) return;
       await updateDoc(doc(db, "groups", T.gid), { [`releasedEx.${u}`]: arrayRemove(b.dataset.ex) });
@@ -446,7 +498,8 @@ function studentDetail(uid, data) {
       readOnly: true,
       auto: isAuto(ex) ? auto.items[ex.id] : undefined,
       manual: r?.manual?.[ex.id],
-      grading: !isAuto(ex),
+      grading: isManual(ex),
+      itemExtra: T.exr?.[uid]?.feedback?.[ex.id] ? (itemId) => feedbackHTML(T.exr[uid].feedback[ex.id][itemId], { checkedAt: fmtTime(T.exr[uid].feedbackAt?.[ex.id]) }) : null,
     })).join("");
   }).join("");
   return `<div class="box">
