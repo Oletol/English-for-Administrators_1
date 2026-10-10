@@ -2,7 +2,7 @@
 // упражнения с автосохранением черновика, сдача работы, просмотр результатов.
 import {
   auth, db, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
-  sendPasswordResetEmail, signOut, doc, getDoc, setDoc, onSnapshot, collection, query, orderBy,
+  sendPasswordResetEmail, signOut, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, orderBy,
   serverTimestamp,
 } from "./fb.js";
 import { COURSE_TITLE } from "./firebase-config.js";
@@ -20,6 +20,8 @@ const S = {
   result: {},    // unitId -> result | null
   exr: {},       // unitId -> results of exercises the teacher has checked one by one
   exrVer: 0,
+  // timed tests: testKey -> attempt | null, content | null, result | null, local answers
+  att: {}, attUnsub: {}, tcontent: {}, tres: {}, tresUnsub: {}, tdraft: {},
   unsub: [], unitUnsub: {}, resultUnsub: {},
   registering: false,
 };
@@ -96,7 +98,9 @@ function stopAll() {
   S.unsub.forEach((u) => u()); S.unsub = [];
   Object.values(S.unitUnsub).forEach((u) => u()); S.unitUnsub = {};
   Object.values(S.resultUnsub).forEach((u) => u()); S.resultUnsub = {};
-  Object.assign(S, { profile: null, group: null, units: [], content: {}, sub: {}, result: {}, exr: {} });
+  Object.values(S.attUnsub).forEach((u) => u()); S.attUnsub = {};
+  Object.values(S.tresUnsub).forEach((u) => u()); S.tresUnsub = {};
+  Object.assign(S, { profile: null, group: null, units: [], content: {}, sub: {}, result: {}, exr: {}, att: {}, tcontent: {}, tres: {}, tdraft: {} });
 }
 
 let groupUnsub = null;
@@ -174,6 +178,16 @@ window.addEventListener("hashchange", async () => { await flushSave(); renderNav
 
 // ------------------------------------------------------------------ nav
 function renderNav() {
+  // tests appear only when the teacher has opened them (or released their results)
+  const tests = visibleTests();
+  $("#test-nav-wrap").hidden = !tests.length;
+  const r = route();
+  $("#test-nav").innerHTML = tests.map(([key, t]) => {
+    const a = S.att[key];
+    const note = t.released ? "Results available" : !t.open ? "Closed" : a?.status === "submitted" ? "Submitted" : a ? "In progress" : `${t.minutes} min · open now`;
+    return `<a class="sb-item ${r.unit === "test" && r.section === key ? "on" : ""}" href="#test/${esc(key)}">
+      <span class="ic">⏱</span><span class="t">${esc(t.title)}<span class="s">${esc(note)}</span></span></a>`;
+  }).join("");
   renderUnitNav($("#unit-nav"), {
     units: S.units,
     route: route(),
@@ -195,6 +209,7 @@ const unitNum = (u) => u.order || S.units.indexOf(u) + 1;
 function renderMain() {
   if (!S.user || !S.group) return;
   const r = route();
+  if (r.unit === "test") { renderTest(r.section); return; }
   const unit = S.units.find((u) => u.id === r.unit);
   const content = $("#content");
   if (!unit) {
@@ -205,6 +220,7 @@ function renderMain() {
     content.dataset.view = "";
     content.innerHTML = `<header class="page-h"><div class="pe">Welcome</div><h2>Hello${S.profile ? ", " + esc(S.profile.name) : ""}!</h2>
       <p class="pl">${open.length ? "Choose a unit to start working." : "No units are open yet. They will appear here automatically as soon as your teacher opens them."}</p></header>
+      ${visibleTests().filter(([, t]) => t.open).map(([key, t]) => `<div class="ub ub-res"><span><b>Test: ${esc(t.title)}</b> · ${t.minutes} minutes</span><a class="btn primary" href="#test/${esc(key)}">Go to the test</a></div>`).join("")}
       ${open.length ? `<div class="cards">${open.map((u) => `<a class="pg" href="#${esc(u.id)}"><span class="d">Unit ${unitNum(u)}</span><span class="t">${esc(u.title)}</span></a>`).join("")}</div>` : ""}`;
     return;
   }
@@ -292,6 +308,7 @@ $("#content").addEventListener("change", onAnswer);
 function onAnswer(e) {
   const el = e.target;
   if (!el.dataset?.item || el.disabled) return;
+  if ($("#content").dataset.test) { onTestAnswer(el); return; }
   const unitId = $("#content").dataset.unit;
   const sub = S.sub[unitId];
   const v = readInput(el);
@@ -396,4 +413,155 @@ function protectBook() {
     const k = e.key.toLowerCase();
     if ((e.ctrlKey || e.metaKey) && (k === "p" || k === "s")) { e.preventDefault(); note("Printing and saving are turned off in this course book."); }
   });
+}
+
+// ------------------------------------------------------------------ timed tests
+function visibleTests() {
+  return Object.entries(S.group?.tests || {})
+    .filter(([key, t]) => t && (t.open || t.released || S.att[key]))
+    .sort((a, b) => (a[1].title || "").localeCompare(b[1].title || ""));
+}
+const attRef = (key) => doc(db, "testAttempts", `${key}__${S.user.uid}`);
+
+function ensureAttempt(key) {
+  if (S.attUnsub[key]) return;
+  S.attUnsub[key] = onSnapshot(attRef(key), (snap) => {
+    const a = snap.exists() ? snap.data({ serverTimestamps: "estimate" }) : null;
+    S.att[key] = a;
+    if (a && S.tdraft[key] === undefined) S.tdraft[key] = structuredClone(a.answers || {});
+    if (a && S.tcontent[key] === undefined && !snap.metadata.hasPendingWrites) loadTestContent(key);
+    renderNav(); renderMain();
+  }, () => { S.att[key] = null; renderMain(); });
+}
+async function loadTestContent(key) {
+  S.tcontent[key] = "loading";
+  try {
+    const snap = await getDoc(doc(db, "testContent", key));
+    S.tcontent[key] = snap.exists() ? snap.data() : null;
+  } catch { S.tcontent[key] = null; }
+  renderMain();
+}
+function ensureTestResult(key) {
+  if (S.tresUnsub[key]) return;
+  S.tresUnsub[key] = onSnapshot(doc(db, "testResults", `${key}__${S.user.uid}`),
+    (snap) => { S.tres[key] = snap.exists() ? snap.data() : null; renderMain(); },
+    () => { S.tres[key] = null; });
+}
+
+const deadlineOf = (key) => {
+  const a = S.att[key], t = S.group?.tests?.[key];
+  const start = a?.startedAt?.toMillis?.();
+  return start && t ? start + t.minutes * 60000 : null;
+};
+const fmtLeft = (ms) => { const sec = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`; };
+
+function renderTest(key) {
+  const content = $("#content");
+  const t = S.group?.tests?.[key];
+  content.dataset.unit = "";
+  setCrumb(`<b>Test</b> &middot; ${esc(t?.title || "")}`);
+  $("#unit-bar").innerHTML = "";
+  if (!t) { content.dataset.view = ""; content.dataset.test = ""; content.innerHTML = `<div class="locked-msg">This test is not available.</div>`; return; }
+  ensureAttempt(key);
+  if (t.released) ensureTestResult(key);
+  const a = S.att[key];
+  const head = `<header class="page-h"><div class="pe">Test</div><h2>${esc(t.title)}</h2><p class="pl">Time limit: ${t.minutes} minutes</p></header>`;
+  document.title = `Test · ${t.title}`;
+  if (a === undefined) { content.innerHTML = head + `<p class="muted">Loading…</p>`; return; }
+  if (a === null) {
+    content.dataset.view = ""; content.dataset.test = "";
+    content.innerHTML = head + (t.open
+      ? `<div class="box"><p><b>You have ${t.minutes} minutes for this test.</b> The timer starts when you click <b>Start the test</b> and cannot be paused.</p>
+         <p>Your answers are saved automatically. When the time is up, the test closes and your answers are submitted as they are.</p>
+         <button class="btn primary" id="start-test">Start the test</button></div>`
+      : `<div class="locked-msg">This test is closed.</div>`);
+    $("#start-test")?.addEventListener("click", () => startTest(key));
+    return;
+  }
+  const c = S.tcontent[key];
+  if (c === undefined || c === "loading") { content.innerHTML = head + `<p class="muted">Loading the test…</p>`; return; }
+  if (c === null) { content.innerHTML = head + `<div class="locked-msg">The test cannot be shown. It may have been closed by your teacher.</div>`; return; }
+  const deadline = deadlineOf(key);
+  const timeUp = deadline && Date.now() >= deadline;
+  const readOnly = a.status === "submitted" || timeUp || !t.open;
+  const res = t.released ? S.tres[key] : undefined;
+  const viewKey = `test/${key}/${readOnly}/${!!res}`;
+  const active = document.activeElement;
+  if (content.dataset.view === viewKey && active?.dataset?.item && content.contains(active)) { renderTestBar(key, readOnly, res); return; }
+  content.dataset.view = viewKey;
+  content.dataset.test = key;
+  if (readOnly && a.status !== "submitted" && !timeUp) {}  // closed by the teacher
+  content.innerHTML = head + (c.rubric ? `<div class="rubric">${c.rubric}</div>` : "")
+    + renderBlocks(c.exercises || [], (ex) => ({
+      answers: (S.tdraft[key] || a.answers || {})[ex.id] || {},
+      readOnly,
+      auto: res ? res.items?.[ex.id] || {} : undefined,
+    }))
+    + (readOnly ? "" : `<div class="row" style="margin-top:24px"><button class="btn primary" id="submit-test">Submit the test</button></div>`);
+  $("#submit-test")?.addEventListener("click", () => submitTest(key, true));
+  renderTestBar(key, readOnly, res);
+  if (!readOnly && timeUp === false) startTicker(key);
+  if (timeUp && a.status !== "submitted") submitTest(key, false);
+}
+
+function renderTestBar(key, readOnly, res) {
+  const t = S.group.tests[key], a = S.att[key];
+  let html;
+  if (t.released) html = res ? `<div class="ub ub-res"><b>Your result: ${res.score} / ${res.max}</b><span>${esc(t.title)}</span></div>`
+                             : `<div class="ub">Results are available, but you did not answer this test.</div>`;
+  else if (readOnly) html = `<div class="ub ub-sub">✓ Your answers have been submitted. Your teacher will show the results.</div>`;
+  else html = `<div class="ub" style="position:sticky;top:64px;z-index:5"><span id="save-state" class="muted">Your answers are saved automatically</span>
+      <b id="test-timer" style="font-family:var(--mono);font-size:18px">${fmtLeft(deadlineOf(key) - Date.now())}</b></div>`;
+  $("#unit-bar").innerHTML = html;
+}
+
+let ticker = null, tickerKey = null;
+function startTicker(key) {
+  if (ticker && tickerKey === key) return;
+  clearInterval(ticker); tickerKey = key;
+  ticker = setInterval(() => {
+    if (route().section !== key) { clearInterval(ticker); ticker = null; return; }
+    const left = deadlineOf(key) - Date.now();
+    const el = $("#test-timer");
+    if (el) { el.textContent = fmtLeft(left); el.style.color = left < 60000 ? "var(--bad)" : ""; }
+    if (left <= 0) { clearInterval(ticker); ticker = null; submitTest(key, false); }
+  }, 1000);
+}
+
+async function startTest(key) {
+  try {
+    await setDoc(attRef(key), {
+      uid: S.user.uid, groupId: S.profile.groupId, testKey: key,
+      startedAt: serverTimestamp(), updatedAt: serverTimestamp(), answers: {}, status: "in_progress",
+    });
+  } catch (e) { alert(friendlyError(e)); }
+}
+
+let testTimer = null;
+function onTestAnswer(el) {
+  const key = $("#content").dataset.test;
+  const v = readInput(el);
+  if (v === null) return;
+  const d = (S.tdraft[key] ??= {});
+  (d[el.dataset.ex] ??= {})[el.dataset.item] = v;
+  setSaveState("Editing…");
+  clearTimeout(testTimer);
+  testTimer = setTimeout(() => saveTest(key), 800);
+}
+async function saveTest(key, status) {
+  const data = { answers: S.tdraft[key] || {}, updatedAt: serverTimestamp() };
+  if (status) data.status = status;
+  setSaveState("Saving…");
+  try { await updateDoc(attRef(key), data); setSaveState("✓ Saved " + fmtTime(new Date())); return true; }
+  catch (e) { setSaveState("⚠ Not saved: the time may be over."); return false; }
+}
+let submitting = false;
+async function submitTest(key, ask) {
+  if (submitting || S.att[key]?.status === "submitted") return;
+  if (ask && !confirm("Submit the test now? You will not be able to change your answers.")) return;
+  submitting = true;
+  clearTimeout(testTimer);
+  await saveTest(key, "submitted");
+  submitting = false;
+  renderMain();
 }

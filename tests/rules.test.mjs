@@ -132,3 +132,53 @@ test('результаты отдельных упражнений: пишет �
   await assertSucceeds(getDoc(doc(as(A), 'exerciseResults', `u1__${A}`)));
   await assertFails(getDoc(doc(as(B), 'exerciseResults', `u1__${A}`)));
 });
+
+// ---------- контрольные с ограничением времени ----------
+const KEY = 'u1--t1';
+async function openTest(minutes = 10, extra = {}) {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await setDoc(doc(db, 'testContent', KEY), { title: 'Test', exercises: [] });
+    await updateDoc(doc(db, 'groups', 'G1'), { [`tests.${KEY}`]: { open: true, minutes, released: false, ...extra } });
+  });
+}
+const attempt = (uid, gid = 'G1') => ({ uid, groupId: gid, testKey: KEY, startedAt: serverTimestamp(), updatedAt: serverTimestamp(), answers: {}, status: 'in_progress' });
+
+test('закрытую контрольную нельзя ни начать, ни прочитать', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => setDoc(doc(ctx.firestore(), 'testContent', KEY), { title: 'Test' }));
+  await assertFails(setDoc(doc(as(A), 'testAttempts', `${KEY}__${A}`), attempt(A)));
+  await assertFails(getDoc(doc(as(A), 'testContent', KEY)));
+});
+test('задания видны только после старта; чужая группа не видит', async () => {
+  await openTest();
+  await assertFails(getDoc(doc(as(A), 'testContent', KEY)));
+  await assertSucceeds(setDoc(doc(as(A), 'testAttempts', `${KEY}__${A}`), attempt(A)));
+  await assertSucceeds(getDoc(doc(as(A), 'testContent', KEY)));
+  await assertFails(getDoc(doc(as(B), 'testContent', KEY)));
+});
+test('время старта нельзя подделать', async () => {
+  await openTest();
+  await assertFails(setDoc(doc(as(A), 'testAttempts', `${KEY}__${A}`), { ...attempt(A), startedAt: new Date(Date.now() + 3600e3) }));
+});
+test('ответы пишутся во время попытки; после сдачи — нельзя', async () => {
+  await openTest();
+  const ref = doc(as(A), 'testAttempts', `${KEY}__${A}`);
+  await assertSucceeds(setDoc(ref, attempt(A)));
+  await assertSucceeds(updateDoc(ref, { answers: { e1: { 1: 'x' } }, updatedAt: serverTimestamp() }));
+  await assertSucceeds(updateDoc(ref, { status: 'submitted', updatedAt: serverTimestamp() }));
+  await assertFails(updateDoc(ref, { answers: { e1: { 1: 'y' } }, updatedAt: serverTimestamp() }));
+});
+test('после окончания времени писать нельзя', async () => {
+  await openTest(1);
+  await env.withSecurityRulesDisabled(async (ctx) => setDoc(doc(ctx.firestore(), 'testAttempts', `${KEY}__${A}`),
+    { ...attempt(A), startedAt: new Date(Date.now() - 5 * 60e3), updatedAt: new Date(Date.now() - 5 * 60e3) }));
+  await assertFails(updateDoc(doc(as(A), 'testAttempts', `${KEY}__${A}`), { answers: { e1: { 1: 'late' } }, updatedAt: serverTimestamp() }));
+});
+test('результаты контрольной видны только после того, как преподаватель их показал', async () => {
+  await openTest();
+  await assertSucceeds(setDoc(doc(as(T), 'testResults', `${KEY}__${A}`), { uid: A, groupId: 'G1', testKey: KEY, score: 3 }));
+  await assertFails(getDoc(doc(as(A), 'testResults', `${KEY}__${A}`)));
+  await updateDoc(doc(as(T), 'groups', 'G1'), { [`tests.${KEY}.released`]: true });
+  await assertSucceeds(getDoc(doc(as(A), 'testResults', `${KEY}__${A}`)));
+});
+

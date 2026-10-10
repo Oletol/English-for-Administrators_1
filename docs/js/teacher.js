@@ -26,12 +26,14 @@ const T = {
   includeDrafts: false,
   groupFilter: null,
   showCorrect: ls.get("showCorrect", "1") === "1",
+  tests: [], testsLoaded: false, testSel: null, attempts: [], testRes: {}, testContent: {},
   unsub: [], ctxUnsub: [],
 };
 
 const TOOLS = [
   { id: "access", icon: "🔓", title: "Access & results", sub: "Open units, release results" },
   { id: "works", icon: "📝", title: "Student work", sub: "Answers, open-answer marking" },
+  { id: "tests", icon: "⏱", title: "Tests", sub: "Timed tests: open, watch, check" },
   { id: "stats", icon: "📊", title: "Analytics", sub: "Difficult questions, heat map" },
   { id: "groups", icon: "👥", title: "Groups & students", sub: "Group codes, moving students" },
   { id: "content", icon: "📦", title: "Course content", sub: "Import units and keys" },
@@ -76,7 +78,7 @@ onAuthStateChanged(auth, async (user) => {
   $("#me-email").textContent = user.email;
 
   T.unsub.push(onSnapshot(collection(db, "groups"), (snap) => {
-    T.groups = snap.docs.map((d) => ({ id: d.id, openUnits: [], releasedUnits: [], releasedEx: {}, ...d.data() }))
+    T.groups = snap.docs.map((d) => ({ id: d.id, openUnits: [], releasedUnits: [], releasedEx: {}, tests: {}, ...d.data() }))
       .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
     if (!T.groups.find((g) => g.id === T.gid)) T.gid = T.groups[0]?.id || "";
     fillCtx(); subscribeCtx(); render();
@@ -188,7 +190,7 @@ function render(force = false) {
   if (r.unit) { $("#view").innerHTML = viewUnit(r); return; }
   const tool = TOOLS.find((t) => t.id === r.tool);
   $("#crumb").innerHTML = `<b>Teaching tools</b> &middot; ${tool.title}`;
-  const views = { access: viewAccess, works: viewWorks, stats: viewStats, content: viewContent, groups: viewGroups };
+  const views = { access: viewAccess, works: viewWorks, tests: viewTests, stats: viewStats, content: viewContent, groups: viewGroups };
   $("#view").innerHTML = views[r.tool]();
 }
 
@@ -350,6 +352,20 @@ document.addEventListener("click", (e) => {
     "delete-unit": () => deleteUnit(u),
     "create-group": () => createGroup(),
     "load-users": () => loadAllUsers(),
+    "test-open": () => openTest(b.dataset.key),
+    "test-close": () => guard(async () => {
+      if (!confirm("Close the test? Students who have not finished will not be able to continue.")) return;
+      await updateDoc(doc(db, "groups", T.gid), { [`tests.${b.dataset.key}.open`]: false });
+    }),
+    "test-release": () => releaseTest(b.dataset.key),
+    "test-unrelease": () => guard(async () => updateDoc(doc(db, "groups", T.gid), { [`tests.${b.dataset.key}.released`]: false })),
+    "test-select": () => { T.testSel = b.dataset.key; subscribeAttempts(); render(true); },
+    "test-reset": () => guard(async () => {
+      if (!confirm("Delete this student's attempt so that they can take the test again?")) return;
+      const id = `${T.testSel}__${b.dataset.uid}`;
+      await Promise.all([deleteDoc(doc(db, "testAttempts", id)), deleteDoc(doc(db, "testResults", id))]);
+      toast("The student can start the test again.");
+    }),
   };
   handlers[act]?.();
 });
@@ -565,6 +581,25 @@ function viewContent() {
   <table class="t"><tr><th>#</th><th>id</th><th>Unit</th><th>Status</th><th></th></tr>${rows || `<tr><td colspan="5" class="muted">The course is empty. Import a JSON file.</td></tr>`}</table>`;
 }
 
+// Strip the answers out of one exercise: returns the exercise for students and its keys
+function stripExercise(b, seen, where) {
+  if (!b.id || seen.has(b.id)) throw new Error(`Missing or repeated exercise id “${b.id}” (${where})`);
+  seen.add(b.id);
+  if (!KIND_LABEL[b.kind]) throw new Error(`Exercise ${b.id}: unknown kind “${b.kind}” (gap | match | mcq | open)`);
+  const keys = {};
+  const items = (b.items || []).map((it) => {
+    const { answer, ...rest } = it;
+    if (it.id === undefined) throw new Error(`Exercise ${b.id}: an item has no id`);
+    rest.id = String(it.id);
+    if (b.kind !== "open" && b.graded !== false) {
+      if (answer === undefined || answer === "") throw new Error(`Exercise ${b.id}, item ${it.id}: no answer`);
+      keys[rest.id] = answer;
+    }
+    return rest;
+  });
+  return { ex: { ...b, type: "exercise", items }, keys };
+}
+
 function splitUnit(u) {
   if (!u.id || !/^[A-Za-z0-9_-]+$/.test(u.id)) throw new Error(`Invalid unit id “${u.id}” (use Latin letters, digits, - and _)`);
   if (!u.title) throw new Error(`Unit ${u.id} has no title`);
@@ -574,7 +609,17 @@ function splitUnit(u) {
     status: u.status || (hasContent ? "ready" : "soon"),
     sections: (u.sections || []).map((s) => ({ id: s.id, title: s.title, ...(s.subtitle ? { subtitle: s.subtitle } : {}) })),
   };
-  if (!hasContent) return { meta };
+  // timed tests: hidden from students until the teacher opens them
+  const tests = {}, testKeys = {};
+  for (const t of u.tests || []) {
+    if (!t.id || !/^[A-Za-z0-9_-]+$/.test(t.id) || tests[t.id]) throw new Error(`Unit ${u.id}: test with a missing or repeated id “${t.id}”`);
+    if (!(Number(t.minutes) > 0)) throw new Error(`Test ${t.id}: set "minutes" (the time limit)`);
+    const seenT = new Set(), keysT = {};
+    const exercises = (t.exercises || []).map((b) => { const r = stripExercise(b, seenT, `${u.id}, test ${t.id}`); keysT[b.id] = r.keys; return r.ex; });
+    tests[t.id] = { unitId: u.id, testId: t.id, title: t.title || "Test", minutes: Number(t.minutes), rubric: t.rubric || "", exercises };
+    testKeys[t.id] = { title: t.title || "Test", minutes: Number(t.minutes), keys: keysT };
+  }
+  if (!hasContent) return { meta, tests, keys: Object.keys(tests).length ? { exercises: {}, notes: {}, tests: testKeys } : null };
   const keys = {}, notes = {}, seen = new Set();
   const sections = u.sections.map((s) => {
     if (!s.id || !s.title) throw new Error(`A section in unit ${u.id} has no id or title`);
@@ -582,25 +627,13 @@ function splitUnit(u) {
     for (const b of s.blocks || []) {
       if (b.type === "teacher-note") { (notes[s.id] ??= []).push({ at: blocks.length, html: b.html }); continue; }
       if (b.type !== "exercise") { blocks.push(b); continue; }
-      if (!b.id || seen.has(b.id)) throw new Error(`Missing or repeated exercise id “${b.id}” (${u.id})`);
-      seen.add(b.id);
-      if (!KIND_LABEL[b.kind]) throw new Error(`Exercise ${b.id}: unknown kind “${b.kind}” (gap | match | mcq | open)`);
-      keys[b.id] = {};
-      const items = (b.items || []).map((it) => {
-        const { answer, ...rest } = it;
-        if (it.id === undefined) throw new Error(`Exercise ${b.id}: an item has no id`);
-        rest.id = String(it.id);
-        if (b.kind !== "open" && b.graded !== false) {
-          if (answer === undefined || answer === "") throw new Error(`Exercise ${b.id}, item ${it.id}: no answer`);
-          keys[b.id][rest.id] = answer;
-        }
-        return rest;
-      });
-      blocks.push({ ...b, items });
+      const r = stripExercise(b, seen, u.id);
+      keys[b.id] = r.keys;
+      blocks.push(r.ex);
     }
     return { id: s.id, title: s.title, ...(s.subtitle ? { subtitle: s.subtitle } : {}), blocks };
   });
-  return { meta, content: { sections }, keys: { exercises: keys, notes } };
+  return { meta, content: { sections }, tests, keys: { exercises: keys, notes, tests: testKeys } };
 }
 
 async function importCourse() {
@@ -615,13 +648,13 @@ async function importCourse() {
     parts.forEach((p, i) => {
       const id = list[i].id;
       batch.set(doc(db, "units", id), p.meta);
-      if (p.content) {
-        batch.set(doc(db, "unitContent", id), p.content);
-        batch.set(doc(db, "answerKeys", id), p.keys);
-      }
+      if (p.content) batch.set(doc(db, "unitContent", id), p.content);
+      if (p.keys) batch.set(doc(db, "answerKeys", id), p.keys);
+      for (const [tid, t] of Object.entries(p.tests || {})) batch.set(doc(db, "testContent", `${id}--${tid}`), t);
     });
     await batch.commit();
     for (const l of list) delete T.unitData[l.id];
+    T.testsLoaded = false;
     $("#import-text").value = "";
     toast(`Units imported: ${parts.length}`);
     ctxKey = ""; subscribeCtx(); render(true);
@@ -692,5 +725,136 @@ async function createGroup() {
     document.activeElement?.blur();
     toast(`Group created. Code for students: ${code}`, 8000);
     loadAllUsers();
+  });
+}
+
+// ================================================================== Timed tests
+// Tests are described in course.json (unit.tests) and stored apart from the book:
+// testContent/{unitId--testId} — questions; answerKeys/{unitId}.tests — keys.
+async function loadTests() {
+  if (T.testsLoading) return;
+  T.testsLoading = true;
+  const list = [];
+  for (const u of T.units) {
+    const k = await getDoc(doc(db, "answerKeys", u.id)).catch(() => null);
+    for (const [tid, t] of Object.entries(k?.exists() ? k.data().tests || {} : {})) {
+      list.push({ key: `${u.id}--${tid}`, unitId: u.id, testId: tid, title: t.title, minutes: t.minutes, keys: t.keys || {} });
+    }
+  }
+  T.tests = list; T.testsLoaded = true; T.testsLoading = false;
+  render(true);
+}
+
+let attUnsub = null, attKey = "";
+function subscribeAttempts() {
+  const key = `${T.gid}|${T.testSel}`;
+  if (key === attKey) return;
+  attKey = key; attUnsub?.(); T.attempts = []; T.testRes = {};
+  if (!T.gid || !T.testSel) return;
+  const u1 = onSnapshot(query(collection(db, "testAttempts"), where("groupId", "==", T.gid), where("testKey", "==", T.testSel)),
+    (snap) => { T.attempts = snap.docs.map((d) => d.data({ serverTimestamps: "estimate" })); render(); });
+  const u2 = onSnapshot(query(collection(db, "testResults"), where("groupId", "==", T.gid), where("testKey", "==", T.testSel)),
+    (snap) => { T.testRes = Object.fromEntries(snap.docs.map((d) => [d.data().uid, d.data()])); render(); });
+  attUnsub = () => { u1(); u2(); };
+  if (!T.testContent?.[T.testSel]) getDoc(doc(db, "testContent", T.testSel)).then((d) => { (T.testContent ??= {})[T.testSel] = d.data(); render(); });
+}
+setInterval(() => { if (route().tool === "tests" && T.testSel) render(); }, 5000);
+
+function viewTests() {
+  const g = group();
+  const head = pageHead("Teaching tools", "Tests", "Timed tests stay hidden from students until you open them for a group.");
+  if (!g) return head + `<div class="box">First create a group in <a href="#tools/groups">Groups &amp; students</a>.</div>`;
+  if (!T.testsLoaded) { loadTests(); return head + `<p class="muted">Loading…</p>`; }
+  if (!T.tests.length) return head + `<div class="box">There are no tests in the course yet. Tests are added to a unit in the course file (<code>"tests"</code>) and imported in <a href="#tools/content">Course content</a>.</div>`;
+  if (T.testSel) subscribeAttempts();
+  const rows = T.tests.map((t) => {
+    const cfg = g.tests?.[t.key];
+    const u = T.units.find((x) => x.id === t.unitId);
+    const status = cfg?.released ? `<span class="pill on">results shown</span>`
+      : cfg?.open ? `<span class="pill warn">open now</span>`
+      : cfg ? `<span class="pill off">closed</span>` : `<span class="pill off">hidden</span>`;
+    return `<tr class="${T.testSel === t.key ? "sel" : ""}">
+      <td><b>${esc(t.title)}</b><br><small class="muted">Unit ${u ? unitNum(u) : esc(t.unitId)}</small></td>
+      <td class="num">${t.minutes} min</td>
+      <td>${status}</td>
+      <td class="row">
+        ${cfg?.open ? `<button class="btn small" data-act="test-close" data-key="${esc(t.key)}">Close</button>`
+                    : `<button class="btn small good" data-act="test-open" data-key="${esc(t.key)}">${cfg ? "Open again" : "Open for the group"}</button>`}
+        ${cfg?.released ? `<button class="btn small danger" data-act="test-unrelease" data-key="${esc(t.key)}">Hide results</button>`
+                        : cfg ? `<button class="btn small" data-act="test-release" data-key="${esc(t.key)}">Check &amp; show results</button>` : ""}
+        <button class="btn small" data-act="test-select" data-key="${esc(t.key)}">Details</button>
+      </td></tr>`;
+  }).join("");
+  return head + `<table class="t"><tr><th>Test</th><th>Time</th><th>Group ${esc(g.name)}</th><th></th></tr>${rows}</table>
+    ${T.testSel ? testDetail(g) : ""}`;
+}
+
+function testDetail(g) {
+  const t = T.tests.find((x) => x.key === T.testSel);
+  const c = T.testContent?.[T.testSel];
+  if (!t) return "";
+  const byUid = Object.fromEntries((T.attempts || []).map((a) => [a.uid, a]));
+  const now = Date.now();
+  const rows = T.students.map((st) => {
+    const a = byUid[st.uid], r = T.testRes?.[st.uid];
+    let status = `<span class="pill off">not started</span>`, time = "";
+    if (a) {
+      const start = a.startedAt?.toMillis?.() || now, end = start + t.minutes * 60000;
+      if (a.status === "submitted") { status = `<span class="pill on">submitted</span>`; time = fmtTime(a.updatedAt); }
+      else if (now < end && g.tests?.[t.key]?.open) { status = `<span class="pill warn">in progress</span>`; time = `${Math.ceil((end - now) / 60000)} min left`; }
+      else { status = `<span class="pill on">time over</span>`; time = fmtTime(a.updatedAt); }
+    }
+    let prelim = "";
+    if (a && c) {
+      let sc = 0, mx = 0;
+      for (const ex of c.exercises || []) { const gr = gradeExercise(ex, a.answers?.[ex.id], t.keys[ex.id]); if (isAuto(ex)) { sc += gr.score; mx += gr.max; } }
+      prelim = `${sc} / ${mx}`;
+    }
+    const answered = a ? Object.values(a.answers || {}).reduce((n, ex) => n + Object.values(ex).filter((v) => String(v).trim()).length, 0) : 0;
+    return `<tr><td><b>${esc(st.name)}</b></td><td>${status}</td><td>${a ? fmtTime(a.startedAt) : ""}</td><td>${time}</td>
+      <td class="num">${a ? answered : ""}</td><td class="num">${prelim}</td><td class="num">${r ? `<b>${r.score} / ${r.max}</b>` : ""}</td>
+      <td>${a ? `<button class="btn small" data-act="test-reset" data-uid="${esc(st.uid)}">Allow a new attempt</button>` : ""}</td></tr>`;
+  }).join("");
+  const preview = c ? renderBlocks(c.exercises || [], (ex) => ({ key: t.keys[ex.id] || {}, readOnly: true })) : `<p class="muted">Loading…</p>`;
+  return `<div class="box"><h2 style="margin-top:0">${esc(t.title)} <span class="muted" style="font-size:16px">· ${t.minutes} minutes · group ${esc(g.name)}</span></h2>
+    <p class="muted">The table updates live. “Score” is preliminary; students see it only after “Check &amp; show results”.</p>
+    <table class="t"><tr><th>Student</th><th>Status</th><th>Started</th><th>Time</th><th>Answered</th><th>Score</th><th>Released</th><th></th></tr>
+    ${rows || `<tr><td colspan="8" class="muted">There are no students in this group yet.</td></tr>`}</table>
+    <details><summary>Questions with keys</summary>${preview}</details></div>`;
+}
+
+async function openTest(key) {
+  const t = T.tests.find((x) => x.key === key);
+  await guard(async () => {
+    if (!confirm(`Open “${t.title}” for the group now?\nEach student has ${t.minutes} minutes from the moment they click “Start the test”.`)) return;
+    await updateDoc(doc(db, "groups", T.gid), {
+      [`tests.${key}`]: { open: true, released: false, minutes: t.minutes, title: t.title, unitId: t.unitId, openedAt: serverTimestamp() },
+    });
+    T.testSel = key; subscribeAttempts();
+    toast("The test is open. Students can see it in their sidebar.");
+  });
+}
+
+async function releaseTest(key) {
+  const t = T.tests.find((x) => x.key === key);
+  await guard(async () => {
+    const c = (await getDoc(doc(db, "testContent", key))).data();
+    const atts = (await getDocs(query(collection(db, "testAttempts"), where("groupId", "==", T.gid), where("testKey", "==", key)))).docs.map((d) => d.data());
+    if (!confirm(`Check the test and show the results?\nAttempts: ${atts.length}. The test will be closed for the group.`)) return;
+    let batch = writeBatch(db), n = 0;
+    for (const a of atts) {
+      const items = {}; let score = 0, max = 0;
+      for (const ex of c.exercises || []) {
+        if (!isAuto(ex)) continue;
+        const gr = gradeExercise(ex, a.answers?.[ex.id], t.keys[ex.id]);
+        if (!T.showCorrect) for (const it of Object.values(gr.items)) delete it.correct;
+        items[ex.id] = gr.items; score += gr.score; max += gr.max;
+      }
+      batch.set(doc(db, "testResults", `${key}__${a.uid}`), { uid: a.uid, groupId: T.gid, testKey: key, items, score, max, gradedAt: serverTimestamp() });
+      if (++n % 400 === 0) { await batch.commit(); batch = writeBatch(db); }
+    }
+    batch.update(doc(db, "groups", T.gid), { [`tests.${key}.open`]: false, [`tests.${key}.released`]: true });
+    await batch.commit();
+    toast(`Checked: ${atts.length}. Students can see their results now.`);
   });
 }

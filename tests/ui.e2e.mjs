@@ -8,7 +8,7 @@ const BASE = "http://127.0.0.1:5055";
 const SHOTS = process.env.SHOTS || "/tmp/shots";
 mkdirSync(SHOTS, { recursive: true });
 const mock = readFileSync(new URL("./mock-fb.js", import.meta.url), "utf8");
-const course = readFileSync(new URL("./fixture-course.json", import.meta.url), "utf8");
+const course = readFileSync(new URL("../content-private/test-fixture.json", import.meta.url), "utf8");
 
 const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" }).catch(() => chromium.launch());
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
@@ -154,6 +154,45 @@ assert.equal((await s1.textContent("#ex-m3 .ex-score")).trim(), "2 / 15", "ва�
 const arrows = await s1.evaluate(() => /[→←⤮«»▼›]/.test(document.body.innerText));
 assert.equal(arrows, false, "в интерфейсе нет стрелок");
 await s1.locator("#ex-m4").screenshot({ path: `${SHOTS}/16-prepositions-checked.png` });
+
+step("Контрольная с таймером: скрыта, пока преподаватель её не откроет");
+assert.equal(await s1.locator("#test-nav-wrap").isHidden(), true, "контрольной не видно");
+let dbNow = await s1.evaluate(() => JSON.parse(localStorage.getItem("mock:db")));
+assert.ok(dbNow["testContent/u1--t1"], "задания контрольной загружены отдельно");
+assert.ok(!JSON.stringify(dbNow["testContent/u1--t1"]).includes('"answer"'), "в заданиях контрольной нет ключей");
+assert.ok(!JSON.stringify(dbNow["unitContent/u1"]).includes("Vocabulary check"), "контрольной нет в учебнике");
+await t.click('a[href="#tools/tests"]');
+await t.waitForSelector('[data-act="test-open"]');
+await t.click('[data-act="test-open"]');
+await s1.waitForSelector('#test-nav a', { timeout: 5000 });
+await s1.click('#test-nav a');
+await s1.waitForSelector("#start-test");
+assert.equal(await s1.locator("#ex-q1").count(), 0, "до старта вопросов не видно");
+await s1.click("#start-test");
+await s1.waitForSelector("#ex-q1", { timeout: 5000 });
+await s1.waitForSelector("#test-timer");
+const timerText = (await s1.textContent("#test-timer")).trim();
+assert.ok(/^(9|10):\d\d$/.test(timerText), "таймер идёт: " + timerText);
+await s1.check(`${sel("q1", "1")}[value=A]`);
+await s1.check(`${sel("q1", "2")}[value=A]`);
+await s1.fill(sel("q2", "1"), "with");
+await s1.locator("#save-state", { hasText: /Saved|saved/ }).waitFor({ timeout: 5000 });
+await shot(s1, "17-student-test");
+await t.click('[data-act="test-select"]');
+await t.waitForSelector("text=in progress");
+await shot(t, "18-teacher-test-monitor");
+// время вышло: переносим старт попытки на 11 минут назад
+await s1.evaluate(() => { const d = JSON.parse(localStorage.getItem("mock:db")); for (const k in d) if (k.startsWith("testAttempts/")) d[k].startedAt = { __ts: Date.now() - 11 * 60000 }; localStorage.setItem("mock:db", JSON.stringify(d)); });
+await s1.reload();
+await s1.waitForSelector("#ex-q1", { timeout: 5000 });
+assert.equal(await s1.locator(sel("q2", "2")).isDisabled(), true, "после окончания времени поля закрыты");
+await t.click('[data-act="test-release"]');
+await s1.waitForSelector(".ub-res:has-text('Your result')", { timeout: 5000 });
+assert.ok((await s1.textContent(".ub-res")).includes("2 / 4"));
+await shot(s1, "19-student-test-result");
+await s1.click('.sb-uh[data-unit="u1"]');
+await s1.click('.sb-item:has-text("Warm-up")');
+await s1.waitForSelector("#submit-unit");
 
 step("Преподаватель видит черновик в реальном времени");
 await t.selectOption("#ctx-unit", "u1");

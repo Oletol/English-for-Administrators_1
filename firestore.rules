@@ -50,6 +50,15 @@ service cloud.firestore {
     function releasedEx(gid, unitId) {
       return groupData(gid).get('releasedEx', {}).get(unitId, []);
     }
+    // контрольные (тесты): настройки в groups/{gid}.tests[testKey] = {open, minutes, released, ...}
+    function testCfg(gid, key) {
+      return groupData(gid).get('tests', {}).get(key, {});
+    }
+    function testOpenForMe(key) {
+      return signedIn()
+        && exists(docPath('users', request.auth.uid))
+        && testCfg(myGroupId(), key).get('open', false) == true;
+    }
     // id документов submissions/results: "<unitId>__<uid>"
     function ownsId(docId) {
       return signedIn() && docId.matches('^[A-Za-z0-9_-]+__' + request.auth.uid + '$');
@@ -159,6 +168,61 @@ service cloud.firestore {
     // id = "<unitId>__<uid>"; там лежат только уже проверенные упражнения
     match /exerciseResults/{rid} {
       allow read: if isTeacher() || ownsId(rid);
+      allow write: if isTeacher();
+    }
+
+    // ---------- контрольные с ограничением времени ----------
+    // Задания контрольной (без ключей). Студент видит их, только если уже нажал «Start»
+    // (создал попытку) и контрольная открыта для его группы или по ней показаны результаты.
+    match /testContent/{key} {
+      allow read: if isTeacher()
+        || (signedIn()
+            && exists(docPath('users', request.auth.uid))
+            && (testCfg(myGroupId(), key).get('open', false) == true
+                || testCfg(myGroupId(), key).get('released', false) == true)
+            && exists(docPath('testAttempts', key + '__' + request.auth.uid)));
+      allow write: if isTeacher();
+    }
+
+    // Попытка студента: id = "<testKey>__<uid>".
+    // Время старта ставит сервер; писать ответы можно только до конца отведённого времени (+30 с).
+    match /testAttempts/{aid} {
+      allow read: if isTeacher() || ownsId(aid);
+
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['uid', 'groupId', 'testKey', 'startedAt', 'updatedAt', 'answers', 'status'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.groupId == myGroupId()
+        && aid == request.resource.data.testKey + '__' + request.auth.uid
+        && testOpenForMe(request.resource.data.testKey)
+        && request.resource.data.startedAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.status == 'in_progress'
+        && request.resource.data.answers is map
+        && request.resource.data.answers.size() == 0;
+
+      allow update: if
+        (signedIn()
+          && resource.data.uid == request.auth.uid
+          && resource.data.status == 'in_progress'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['answers', 'status', 'updatedAt'])
+          && request.resource.data.answers is map
+          && request.resource.data.status in ['in_progress', 'submitted']
+          && request.resource.data.updatedAt == request.time
+          && testOpenForMe(resource.data.testKey)
+          && request.time <= resource.data.startedAt
+               + duration.value(int(testCfg(myGroupId(), resource.data.testKey).get('minutes', 0) * 60) + 30, 's'))
+        || (isTeacher() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']));
+
+      allow delete: if isTeacher();      // «разрешить новую попытку»
+    }
+
+    // Результаты контрольной: студент видит свой, только когда преподаватель их показал.
+    match /testResults/{rid} {
+      allow read: if isTeacher()
+        || (ownsId(rid)
+            && (resource == null
+                || testCfg(resource.data.groupId, resource.data.testKey).get('released', false) == true));
       allow write: if isTeacher();
     }
 
