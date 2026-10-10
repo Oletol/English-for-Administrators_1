@@ -113,12 +113,12 @@ assert.equal(await s1.inputValue(sel("g1", "2")), "gives", "черновик в�
 step("Флеш-карточки и упражнение 1.1.1 (буквы)");
 await s1.click('.sb-item:has-text("Warm-up")');
 await s1.waitForSelector(".fc-card");
-await s1.click(".fc-card");
+await s1.locator(".fc-card").first().click();
 assert.equal(await s1.locator(".fc-card.flip").count(), 1);
 await s1.waitForTimeout(500);
-await s1.locator(".fc").screenshot({ path: `${SHOTS}/14-flashcard-back.png` });
-await s1.click('[data-fc="next"]');
-assert.equal((await s1.textContent(".fc-count")).trim(), "2 / 15");
+await s1.locator(".fc").first().screenshot({ path: `${SHOTS}/14-flashcard-back.png` });
+await s1.locator('[data-fc="next"]').first().click();
+assert.equal((await s1.locator(".fc-count").first().textContent()).trim(), "2 / 15");
 const m1key = "b d e f a j n m h o i g l k c".split(" ");
 for (let i = 1; i <= 12; i++) await s1.fill(sel("m1", String(i)), i === 11 ? "x" : m1key[i - 1].toUpperCase());
 await s1.fill(sel("m2", "1"), "b");
@@ -226,6 +226,25 @@ assert.equal(await s1.locator(sel("m5", "1")).isDisabled(), false, "текст �
 await s1.locator("#ex-m5 li").first().screenshot({ path: `${SHOTS}/20-writing-feedback.png` });
 await s1.fill(sel("m5", "1"), t1.replace("has went", "has gone"));
 await s1.locator("#save-state", { hasText: /Saved|saved/ }).waitFor({ timeout: 5000 });
+
+step("1.1.6 с проверкой по кнопке, 1.1.7 карточки для обсуждения");
+await s1.fill(sel("m6", "1"), "catch");
+await s1.fill(sel("m6", "12"), "sorry");
+await s1.fill(sel("m6", "2"), "say");
+await s1.waitForTimeout(2500);
+assert.equal(await s1.locator("#ex-m6 .ex-score").count(), 0, "до проверки результата нет");
+await t.click('[data-act="check-ex"][data-ex="m6"]');
+await s1.waitForSelector("#ex-m6 .ex-score", { timeout: 5000 });
+assert.equal((await s1.textContent("#ex-m6 .ex-score")).trim(), "2 / 15");
+const deck = s1.locator(".fc-disc");
+assert.equal((await deck.locator(".ex-n").textContent()).trim(), "1.1.7");
+assert.equal((await deck.locator(".lbl").textContent()).trim(), "Card 1");
+await deck.locator('[data-fc="next"]').click();
+assert.equal((await deck.locator(".lbl").textContent()).trim(), "Card 2");
+assert.ok((await deck.locator(".q").textContent()).includes("officials"));
+await deck.screenshot({ path: `${SHOTS}/21-discussion-cards.png` });
+const afterDeck = await s1.evaluate(() => { const el = document.querySelector(".fc-disc"); let n = el.nextElementSibling; while (n && !n.matches(".discuss,section,.ex")) n = n.nextElementSibling; return n ? n.className : "none"; });
+assert.equal(afterDeck, "none", "после карточек нет блока Talk about it");
 
 step("Преподаватель видит черновик в реальном времени");
 await t.selectOption("#ctx-unit", "u1");

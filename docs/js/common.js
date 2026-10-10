@@ -121,7 +121,7 @@ export function renderBlocks(blocks, exOpts, numPrefix = "") {
   return (blocks || []).map((b) => {
     if (b.type === "html") return `<div class="block-html">${b.html}</div>`;
     if (b.type === "teacher-note") return `<div class="tnote"><div class="tn-h"><span class="tn-ic">T</span>Teaching notes</div><div class="tn-b">${b.html}</div></div>`;
-    if (b.type === "flashcards") return renderFlashcards(b);
+    if (b.type === "flashcards") { if (b.numbered) n += 1; return renderFlashcards(b, b.numbered ? (numPrefix ? `${numPrefix}.${n}` : String(n)) : ""); }
     if (b.type === "image") return renderImages([b], b.layout);
     if (b.type === "images") return renderImages(b.items || [], b.layout || "grid");
     if (b.type === "audio") return renderAudio(b);
@@ -306,13 +306,14 @@ export function wireAuthForm(root, handlers) {
 // ---------------------------------------------------------------------
 //  Flashcards: word on the front; translation and an example on the back
 // ---------------------------------------------------------------------
-export function renderFlashcards(b) {
+export function renderFlashcards(b, num = "") {
   const cards = b.cards || [];
   const data = esc(JSON.stringify(cards));
-  return `<section class="fc" data-cards="${data}" data-i="0">
-    <div class="fc-h"><span class="ic">🃏</span><span class="ex-t">${esc(b.title || "Flashcards")}</span></div>
+  const style = b.style === "discussion" ? "discussion" : "words";
+  return `<section class="fc ${style === "discussion" ? "fc-disc" : ""}" data-cards="${data}" data-i="0" data-style="${style}">
+    <div class="fc-h">${num ? `<span class="ex-n">${esc(num)}</span>` : `<span class="ic">🃏</span>`}<span class="ex-t">${esc(b.title || "Flashcards")}</span></div>
     ${b.rubric ? `<p class="ex-i">${b.rubric}</p>` : ""}
-    <div class="fc-stage">${fcCard(cards[0], 0, cards.length)}</div>
+    <div class="fc-stage">${fcCard(cards[0], 0, cards.length, style)}</div>
     <div class="fc-nav">
       <button class="btn small" type="button" data-fc="prev">Previous</button>
       <span class="fc-count">1 / ${cards.length}</span>
@@ -322,8 +323,11 @@ export function renderFlashcards(b) {
     <div class="fc-dots">${cards.map((_, i) => `<i class="${i === 0 ? "on" : ""}"></i>`).join("")}</div>
   </section>`;
 }
-function fcCard(c, i, n) {
+function fcCard(c, i, n, style) {
   if (!c) return "";
+  // discussion cards: one side only, the question to talk about
+  if (style === "discussion") return `<div class="fc-card fc-one" tabindex="0">
+    <span class="fc-face fc-front"><span class="lbl">Card ${i + 1}</span><span class="q">${esc(c.front)}</span></span></div>`;
   return `<button type="button" class="fc-card" data-fc="flip" aria-label="Turn the card over">
     <span class="fc-inner">
       <span class="fc-face fc-front"><span class="w">${esc(c.front)}</span><span class="hint">Click to see the translation</span></span>
@@ -343,7 +347,7 @@ export function wireFlashcards(root = document) {
       i = 0;
     } else i = (i + delta + cards.length) % cards.length;
     fc.dataset.i = i;
-    fc.querySelector(".fc-stage").innerHTML = fcCard(cards[i], i, cards.length);
+    fc.querySelector(".fc-stage").innerHTML = fcCard(cards[i], i, cards.length, fc.dataset.style);
     fc.querySelector(".fc-count").textContent = `${i + 1} / ${cards.length}`;
     fc.querySelectorAll(".fc-dots i").forEach((d, k) => d.classList.toggle("on", k === i));
   };
