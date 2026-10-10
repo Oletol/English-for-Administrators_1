@@ -162,7 +162,7 @@ function ensureUnit(unitId) {
       }
     } else if (!snap.metadata.hasPendingWrites) {
       // обновляем статус; ответы — только если у нас нет несохранённых правок
-      Object.assign(cur, { status: server.status, submittedAt: server.submittedAt, updatedAt: server.updatedAt || cur.updatedAt });
+      Object.assign(cur, { status: server.status, submittedAt: server.submittedAt, updatedAt: server.updatedAt || cur.updatedAt, returnNote: server.returnNote, returnedAt: server.returnedAt });
       if (!cur.dirty) cur.answers = server.answers || {};
     }
     syncUnitSubscriptions();
@@ -301,7 +301,10 @@ function renderUnitBar(unit, sub, released, res) {
   } else if (sub.status === "submitted") {
     html = `<div class="ub ub-sub">✓ Submitted ${fmtTime(sub.submittedAt)}. Your teacher will release the results.</div>`;
   } else {
-    html = `<div class="ub"><span id="save-state" class="muted">${sub.dirty ? "Unsaved changes…" : sub.updatedAt ? "Draft saved " + fmtTime(sub.updatedAt) : "Your answers are saved automatically"}</span>
+    const ret = sub.returnedAt && sub.status === "draft"
+      ? `<div class="ub ub-ret"><b>Your teacher has returned this work for revision${sub.returnedAt?.toDate ? ` (${fmtTime(sub.returnedAt)})` : ""}.</b>
+         ${sub.returnNote ? `<span class="ret-note">${esc(sub.returnNote)}</span>` : ""}<span class="muted">Make your changes and submit the unit again.</span></div>` : "";
+    html = ret + `<div class="ub"><span id="save-state" class="muted">${sub.dirty ? "Unsaved changes…" : sub.updatedAt ? "Draft saved " + fmtTime(sub.updatedAt) : "Your answers are saved automatically"}</span>
       <button class="btn primary" id="submit-unit">Submit this unit</button></div>`;
   }
   bar.innerHTML = html;
@@ -345,6 +348,8 @@ async function saveDraft(unitId, status = "draft") {
     answers: sub.answers || {}, status, updatedAt: serverTimestamp(),
   };
   if (status === "submitted") data.submittedAt = serverTimestamp();
+  // the teacher's comment on a returned work stays in the document
+  if (sub.returnedAt) { data.returnNote = sub.returnNote || ""; data.returnedAt = sub.returnedAt; }
   setSaveState("Saving…");
   const p = setDoc(doc(db, "submissions", subId(unitId, S.user.uid)), data);
   // запись уже в локальном кэше (IndexedDB) — даже офлайн она не потеряется

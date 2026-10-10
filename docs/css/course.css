@@ -379,3 +379,9 @@ mark.lt.sp{background:#fff4d6;border-bottom-color:var(--gold)}
 .rtext p:last-child{margin-bottom:0}
 .rtext .pnum{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin-right:8px;border-radius:50%;
  background:var(--gold,#c9a14a);color:#fff;font-family:var(--sans);font-size:12px;font-weight:700;vertical-align:2px}
+/* work returned for revision */
+.ub-ret{flex-direction:column;align-items:flex-start;gap:4px;border-color:#ecd3a4;background:var(--gold3);color:var(--ink);margin-bottom:8px}
+.ub-ret .ret-note{font-style:italic;white-space:pre-wrap}
+/* word in capitals for word formation */
+.stem{font-family:var(--sans);font-weight:700;font-size:13px;letter-spacing:.06em;color:var(--navy);background:var(--gold3);border:1px solid #ecd3a4;border-radius:4px;padding:1px 6px;margin-left:6px;white-space:nowrap}
+body.teacher .stem{color:var(--plum)}

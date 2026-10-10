@@ -96,6 +96,17 @@ test('после сдачи работу нельзя менять', async () =>
   await assertSucceeds(updateDoc(doc(as(T), 'submissions', `u1__${A}`), { status: 'draft' }));
   await assertSucceeds(setDoc(doc(db, 'submissions', `u1__${A}`), draft(A, 'G1')));
 });
+test('возврат на доработку с комментарием: студент не может изменить или стереть комментарий', async () => {
+  const db = as(A), ref = doc(db, 'submissions', `u1__${A}`);
+  await assertSucceeds(setDoc(ref, draft(A, 'G1', { status: 'submitted', submittedAt: serverTimestamp() })));
+  await assertFails(setDoc(ref, draft(A, 'G1', { returnNote: 'fake', returnedAt: serverTimestamp() })));
+  await assertSucceeds(updateDoc(doc(as(T), 'submissions', `u1__${A}`), { status: 'draft', returnNote: 'Check 1.2.3', returnedAt: serverTimestamp() }));
+  const back = (await getDoc(ref)).data();
+  await assertFails(setDoc(ref, draft(A, 'G1')));                                   // комментарий пропал
+  await assertFails(setDoc(ref, draft(A, 'G1', { returnNote: 'ok', returnedAt: back.returnedAt })));
+  await assertSucceeds(setDoc(ref, draft(A, 'G1', { returnNote: back.returnNote, returnedAt: back.returnedAt })));
+  await assertFails(updateDoc(doc(as(T), 'submissions', `u1__${A}`), { status: 'submitted' }));
+});
 test('после включения проверки черновик менять нельзя', async () => {
   await assertSucceeds(setDoc(doc(as(A), 'submissions', `u1__${A}`), draft(A, 'G1')));
   await updateDoc(doc(as(T), 'groups', 'G1'), { releasedUnits: arrayUnion('u1') });

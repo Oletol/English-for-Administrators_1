@@ -18,7 +18,7 @@ export const KIND_LABEL = { gap: "Gap fill", match: "Matching", mcq: "Multiple c
 // auto-checked: has keys (not "open", not marked "graded": false)
 export const isAuto = (ex) => ex.kind !== "open" && ex.graded !== false;
 // marked by the teacher by hand
-export const isManual = (ex) => ex.kind === "open";
+export const isManual = (ex) => ex.kind === "open" && ex.graded !== false;
 // checked by the teacher separately, exercise by exercise ("check": "teacher")
 export const isTeacherChecked = (ex) => isAuto(ex) && ex.check === "teacher";
 const NOAUTO = `autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"`;

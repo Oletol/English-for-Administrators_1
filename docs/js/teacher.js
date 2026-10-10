@@ -396,8 +396,9 @@ document.addEventListener("click", (e) => {
     "select-student": () => { T.selected = b.dataset.uid; if (route().tool !== "works") location.hash = "#tools/works"; else render(true); setTimeout(() => $("#detail")?.scrollIntoView({ behavior: "smooth" }), 50); },
     "save-grades": () => saveGrades(b.dataset.uid),
     "return": () => guard(async () => {
-      if (!confirm("Return this work to the student for revision?")) return;
-      await updateDoc(doc(db, "submissions", subId(T.unitId, b.dataset.uid)), { status: "draft" });
+      const note = prompt("Return this work to the student for revision.\nComment for the student (optional): what should be improved?", "");
+      if (note === null) return;
+      await updateDoc(doc(db, "submissions", subId(T.unitId, b.dataset.uid)), { status: "draft", returnNote: note.trim().slice(0, 1000), returnedAt: serverTimestamp() });
       toast("The work has been returned to the student.");
     }),
     "import": () => importCourse(),
@@ -462,7 +463,7 @@ function viewWorks() {
     const s = subBy[st.uid], r = T.results[st.uid];
     const filled = s ? exs.reduce((n, ex) => n + (ex.items || []).filter((it) => String(s.answers?.[ex.id]?.[it.id] ?? "").trim()).length, 0) : 0;
     const auto = s ? gradeAuto(data.content, s.answers, data.keys) : null;
-    const status = !s ? `<span class="pill off">not started</span>` : s.status === "submitted" ? `<span class="pill on">submitted</span>` : `<span class="pill warn">draft</span>`;
+    const status = !s ? `<span class="pill off">not started</span>` : s.status === "submitted" ? `<span class="pill on">submitted</span>` : s.returnedAt ? `<span class="pill warn">returned</span>` : `<span class="pill warn">draft</span>`;
     const openDone = r ? openTotal - (r.manualPending ?? openTotal) : 0;
     return `<tr class="${T.selected === st.uid ? "sel" : ""}">
       <td><b>${esc(st.name)}</b><br><small class="muted">${esc(st.email)}</small></td>

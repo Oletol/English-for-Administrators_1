@@ -128,7 +128,7 @@ service cloud.firestore {
     // id = "<unitId>__<uid>"
     match /submissions/{subId} {
       function validStudentDoc(d) {
-        return d.keys().hasOnly(['uid', 'groupId', 'unitId', 'answers', 'status', 'updatedAt', 'submittedAt'])
+        return d.keys().hasOnly(['uid', 'groupId', 'unitId', 'answers', 'status', 'updatedAt', 'submittedAt', 'returnNote', 'returnedAt'])
           && d.uid == request.auth.uid
           && d.groupId == myGroupId()
           && subId == d.unitId + '__' + d.uid
@@ -145,6 +145,7 @@ service cloud.firestore {
 
       allow create: if signedIn()
         && validStudentDoc(request.resource.data)
+        && !('returnNote' in request.resource.data) && !('returnedAt' in request.resource.data)
         && studentCanWrite(request.resource.data.unitId)
         && !request.resource.data.answers.keys().hasAny(releasedEx(myGroupId(), request.resource.data.unitId));
 
@@ -154,12 +155,16 @@ service cloud.firestore {
           && resource.data.status == 'draft'           // сданную работу менять нельзя
           && validStudentDoc(request.resource.data)
           && request.resource.data.unitId == resource.data.unitId
+          // комментарий преподавателя студент изменить не может
+          && request.resource.data.get('returnNote', null) == resource.data.get('returnNote', null)
+          && request.resource.data.get('returnedAt', null) == resource.data.get('returnedAt', null)
           && studentCanWrite(resource.data.unitId)
           // ответы в уже проверенных упражнениях менять нельзя
           && !request.resource.data.answers.diff(resource.data.get('answers', {})).affectedKeys()
                 .hasAny(releasedEx(myGroupId(), resource.data.unitId)))
         || (isTeacher()                                 // «вернуть на доработку»
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']));
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'returnNote', 'returnedAt'])
+          && request.resource.data.status == 'draft');
 
       allow delete: if isTeacher();
     }
