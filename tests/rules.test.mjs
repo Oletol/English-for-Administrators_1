@@ -6,7 +6,7 @@ import {
   initializeTestEnvironment, assertSucceeds, assertFails,
 } from '@firebase/rules-unit-testing';
 import {
-  doc, getDoc, setDoc, updateDoc, serverTimestamp, arrayUnion,
+  doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, arrayUnion,
   collection, getDocs, query, where,
 } from 'firebase/firestore';
 
@@ -63,6 +63,28 @@ test('преподаватель переводит студента в друг
 });
 
 // ---------- доступ к контенту ----------
+test('удаление студента из курса: может только преподаватель, со всеми работами', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await setDoc(doc(db, 'submissions', `u1__${A}`), { uid: A, groupId: 'G1', unitId: 'u1', answers: {}, status: 'draft' });
+    await setDoc(doc(db, 'exerciseResults', `u1__${A}`), { uid: A, groupId: 'G1', unitId: 'u1' });
+    await setDoc(doc(db, 'results', `u1__${A}`), { uid: A, groupId: 'G1', unitId: 'u1' });
+    await setDoc(doc(db, 'testAttempts', `u1--t1__${A}`), { uid: A, groupId: 'G1', testKey: 'u1--t1' });
+    await setDoc(doc(db, 'testResults', `u1--t1__${A}`), { uid: A, groupId: 'G1', testKey: 'u1--t1' });
+  });
+  // студент не может удалить ни себя, ни другого студента, ни свои результаты
+  await assertFails(deleteDoc(doc(as(A), 'users', A)));
+  await assertFails(deleteDoc(doc(as(B), 'users', A)));
+  await assertFails(deleteDoc(doc(as(A), 'results', `u1__${A}`)));
+  // преподаватель находит все работы студента по uid и удаляет их, затем профиль
+  for (const c of ['submissions', 'exerciseResults', 'results', 'testAttempts', 'testResults']) {
+    const snap = await assertSucceeds(getDocs(query(collection(as(T), c), where('uid', '==', A))));
+    for (const d of snap.docs) await assertSucceeds(deleteDoc(doc(as(T), c, d.id)));
+  }
+  await assertSucceeds(deleteDoc(doc(as(T), 'users', A)));
+  // без профиля бывший студент не видит контент юнита
+  await assertFails(getDoc(doc(as(A), 'unitContent', 'u1')));
+});
 test('ключи недоступны студенту даже при открытом юните', async () => {
   await assertFails(getDoc(doc(as(A), 'answerKeys', 'u1')));
   await assertSucceeds(getDoc(doc(as(T), 'answerKeys', 'u1')));

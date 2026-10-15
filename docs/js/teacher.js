@@ -36,7 +36,7 @@ const TOOLS = [
   { id: "works", icon: "📝", title: "Student work", sub: "Answers, open-answer marking" },
   { id: "tests", icon: "⏱", title: "Tests", sub: "Timed tests: open, watch, check" },
   { id: "stats", icon: "📊", title: "Analytics", sub: "Difficult questions, heat map" },
-  { id: "groups", icon: "👥", title: "Groups & students", sub: "Group codes, moving students" },
+  { id: "groups", icon: "👥", title: "Groups & students", sub: "Group codes, moving and removing students" },
   { id: "content", icon: "📦", title: "Course content", sub: "Import units and keys" },
 ];
 
@@ -405,6 +405,7 @@ document.addEventListener("click", (e) => {
     "delete-unit": () => deleteUnit(u),
     "create-group": () => createGroup(),
     "load-users": () => loadAllUsers(),
+    "remove-student": () => removeStudent(b.dataset.uid),
     "test-open": () => openTest(b.dataset.key),
     "test-close": () => guard(async () => {
       if (!confirm("Close the test? Students who have not finished will not be able to continue.")) return;
@@ -744,7 +745,8 @@ async function deleteUnit(u) {
 
 // ================================================================== Groups & students
 function viewGroups() {
-  if (!T.usersLoaded) setTimeout(loadAllUsers, 0);
+  // the list is refreshed every time the page is opened (new students may have registered meanwhile)
+  if (!T.usersLoaded || Date.now() - (T.usersAt || 0) > 10000) setTimeout(loadAllUsers, 0);
   const counts = {};
   T.users.forEach((u) => (counts[u.groupId] = (counts[u.groupId] || 0) + 1));
   const filter = T.groupFilter ?? T.gid;
@@ -762,10 +764,12 @@ function viewGroups() {
   <h3>Students</h3>
   <div class="row">Show: <select id="g-filter"><option value="">all groups</option>${T.groups.map((g) => `<option value="${esc(g.id)}" ${filter === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select>
   <button class="btn small" data-act="load-users">Refresh</button></div>
-  <table class="t"><tr><th>Name</th><th>Email</th><th>Group</th></tr>
+  <table class="t"><tr><th>Name</th><th>Email</th><th>Group</th><th></th></tr>
   ${list.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td>
-    <td><select data-move="${esc(u.uid)}">${T.groups.map((g) => `<option value="${esc(g.id)}" ${g.id === u.groupId ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select></td></tr>`).join("")
-    || `<tr><td colspan="3" class="muted">${T.usersLoaded ? "No students" : "Loading…"}</td></tr>`}</table>`;
+    <td><select data-move="${esc(u.uid)}">${T.groups.map((g) => `<option value="${esc(g.id)}" ${g.id === u.groupId ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select></td>
+    <td><button class="btn small danger" data-act="remove-student" data-uid="${esc(u.uid)}">Remove from course</button></td></tr>`).join("")
+    || `<tr><td colspan="4" class="muted">${T.usersLoaded ? "No students" : "Loading…"}</td></tr>`}</table>
+  <p class="muted">Removing a student deletes their profile and all their answers, marks and test attempts. The student can no longer open the course with this account.</p>`;
 }
 
 let loadingUsers = false;
@@ -779,7 +783,32 @@ async function loadAllUsers() {
   });
   loadingUsers = false;
   T.usersLoaded = true;
+  T.usersAt = Date.now();      // also after an error, so that the page does not retry in a loop
   render(true);
+}
+
+// Removing a student: their work first, the profile last (if something fails, the student is still listed and the teacher can try again).
+// The sign-in account itself stays in Firebase Authentication; without a profile it cannot open any unit.
+async function removeStudent(uid) {
+  const st = T.users.find((u) => u.uid === uid);
+  if (!st) return;
+  const gname = T.groups.find((g) => g.id === st.groupId)?.name || st.groupId;
+  if (!confirm(`Remove ${st.name} (${st.email}, group ${gname}) from the course?\n\nTheir profile and all their answers, marks and test attempts will be deleted. This cannot be undone.`)) return;
+  await guard(async () => {
+    const colls = ["submissions", "exerciseResults", "results", "testAttempts", "testResults"];
+    const snaps = await Promise.all(colls.map((c) => getDocs(query(collection(db, c), where("uid", "==", uid)))));
+    const refs = snaps.flatMap((sn, i) => sn.docs.map((d) => doc(db, colls[i], d.id)));
+    let batch = writeBatch(db), n = 0;
+    for (const r of refs) {
+      batch.delete(r);
+      if (++n % 400 === 0) { await batch.commit(); batch = writeBatch(db); }
+    }
+    await batch.commit();
+    await deleteDoc(doc(db, "users", uid));
+    if (T.selected === uid) T.selected = null;
+    toast(`${st.name} has been removed from the course.`);
+    await loadAllUsers();
+  });
 }
 
 async function createGroup() {
