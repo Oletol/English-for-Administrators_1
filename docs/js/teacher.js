@@ -4,14 +4,15 @@ import {
   auth, db, onAuthStateChanged, signInWithEmailAndPassword, sendPasswordResetEmail, signOut,
   doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, orderBy,
   writeBatch, arrayUnion, arrayRemove, serverTimestamp,
-} from "./fb.js";
-import { COURSE_TITLE } from "./firebase-config.js";
+} from "./fb.js?v=20261017c";
+import { COURSE_TITLE } from "./firebase-config.js?v=20261017c";
 import {
   esc, renderBlocks, renderExercise, exercisesOf, isAuto, gradeAuto, buildResult, keyText, norm,
   fmtTime, friendlyError, authFormHTML, wireAuthForm, subId, KIND_LABEL, isTeacherChecked, gradeExercise, wireFlashcards, isManual,
-} from "./common.js";
-import { initShell, renderUnitNav, wireUnitNav } from "./shell.js";
-import { loadVocab, grammarCheck, vocabProfile, unitVocabulary, feedbackHTML, sleep } from "./writing.js";
+} from "./common.js?v=20261017c";
+import { initShell, renderUnitNav, wireUnitNav } from "./shell.js?v=20261017c";
+import { loadVocab, grammarCheck, vocabProfile, unitVocabulary, feedbackHTML, sleep } from "./writing.js?v=20261017c";
+import "./speaking.js?v=20261017c";
 
 const $ = (s) => document.querySelector(s);
 const ls = {
@@ -222,7 +223,7 @@ function viewUnit(r) {
   const blocks = [...sec.blocks];
   for (const note of [...(d.notes[sec.id] || [])].reverse()) blocks.splice(note.at, 0, { type: "teacher-note", html: note.html });
   const prev = secs[i - 1], next = secs[i + 1];
-  return bar + pageHead(`Unit ${n} &middot; ${n}.${i + 1}`, esc(sec.title), esc(meta.subtitle || sec.subtitle || ""))
+  return bar + docxBar(u) + pageHead(`Unit ${n} &middot; ${n}.${i + 1}`, esc(sec.title), esc(meta.subtitle || sec.subtitle || ""))
     + renderBlocks(blocks, (ex) => ({
       key: d.keys[ex.id] || {}, readOnly: true,
       tag: ex.check === "teacher" ? (isManual(ex) ? "Writing check by the teacher" : "Checked by the teacher") : "",
@@ -232,6 +233,31 @@ function viewUnit(r) {
       ${prev ? `<a class="pg" href="#${u.id}/${prev.id}"><span class="d">Previous</span><span class="t">${n}.${i} ${esc(prev.title)}</span></a>` : ""}
       ${next ? `<a class="pg next" href="#${u.id}/${next.id}"><span class="d">Next</span><span class="t">${n}.${i + 2} ${esc(next.title)}</span></a>` : ""}
     </nav>`;
+}
+
+// Download the whole unit as a Word file (no interactive elements): Student's Book or Teacher's Book with keys
+function docxBar(u) {
+  return `<div class="dl-bar"><span>Download Unit ${esc(unitNum(u))} as Word:</span>
+    <button class="btn small" data-act="docx" data-unit="${esc(u.id)}" data-ver="student">Student's Book (.docx)</button>
+    <button class="btn small" data-act="docx" data-unit="${esc(u.id)}" data-ver="teacher">Teacher's Book (.docx)</button></div>`;
+}
+async function downloadDocx(unitId, ver, btn) {
+  const u = T.units.find((x) => x.id === unitId);
+  if (!u) return;
+  const old = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = "Preparing…"; }
+  try {
+    const d = await loadUnitData(unitId);
+    if (!d?.content) throw new Error("This unit has no content yet.");
+    const { exportUnitDocx, saveBlob } = await import("./export-docx.js?v=20261017c");
+    const teacher = ver === "teacher";
+    const sections = d.content.sections.map((s) => ({ ...s, subtitle: (u.sections || []).find((m) => m.id === s.id)?.subtitle || s.subtitle || "" }));
+    const blob = await exportUnitDocx({ courseTitle: COURSE_TITLE, unitNum: unitNum(u), unitTitle: u.title, sections,
+      keys: teacher ? d.keys : {}, notes: teacher ? d.notes : {}, teacher });
+    const safe = (t) => String(t).replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    saveBlob(blob, `${safe(COURSE_TITLE)}_Unit-${unitNum(u)}_${teacher ? "Teachers-Book" : "Students-Book"}.docx`);
+  } catch (e) { console.error(e); toast("Could not create the Word file: " + (e.message || e), 6000); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = old; } }
 }
 
 // Exercises marked "check": "teacher" are checked one at a time, when the teacher decides
@@ -267,7 +293,7 @@ async function checkExercise(gid, unitId, exId) {
     }
     batch.update(doc(db, "groups", gid), { [`releasedEx.${unitId}`]: arrayUnion(exId) });
     await batch.commit();
-    toast(`Exercise checked for ${subs.length} ${subs.length === 1 ? "student" : "students"}. They can see their results now.`);
+    toast(`“${ex.title}” checked for ${subs.length} ${subs.length === 1 ? "student" : "students"}. Only this exercise is closed; the others stay open.`, 6000);
   });
 }
 
@@ -323,9 +349,9 @@ function accessBar(u, g) {
       <span class="pill ${rel ? "on" : "off"}">${rel ? "results released" : "results hidden"}</span></span>
     <span class="row">
       <button class="btn small" data-act="toggle-open" data-unit="${esc(u.id)}">${open ? "Close for the group" : "Open for the group"}</button>
-      ${rel ? `<button class="btn small danger" data-act="unrelease" data-unit="${esc(u.id)}">Hide results</button>`
-            : `<button class="btn small good" data-act="release" data-unit="${esc(u.id)}" ${open ? "" : "disabled"}>Check &amp; release results</button>`}
-    </span></div>`;
+      ${rel ? `<button class="btn small danger" data-act="unrelease" data-unit="${esc(u.id)}">Hide whole-unit results</button>` : ""}
+    </span>
+    <span class="muted" style="flex-basis:100%;font-size:13px">To check one exercise, use the green button above it. The whole unit is checked only in <a href="#tools/access">Access &amp; results</a>.</span></div>`;
 }
 
 // ================================================================== Access & results
@@ -346,12 +372,12 @@ function viewAccess() {
         ${rel
           ? `<button class="btn small" data-act="release" data-unit="${esc(u.id)}" title="Re-check, e.g. for work submitted late">Re-check</button>
              <button class="btn small danger" data-act="unrelease" data-unit="${esc(u.id)}">Hide</button>`
-          : `<button class="btn small good" data-act="release" data-unit="${esc(u.id)}" ${open ? "" : "disabled"}>Check &amp; release</button>`}`}</td>
+          : `<button class="btn small" data-act="release" data-unit="${esc(u.id)}" ${open ? "" : "disabled"}>Check the whole unit</button>`}`}</td>
     </tr>`;
   }).join("");
   return head + `
   <div class="box"><b>Group: ${esc(g.name)}</b> <span class="muted">(code <code>${esc(g.id)}</code>)</span><br>
-  <span class="muted">“Check &amp; release” marks all <b>submitted</b> work of the group against the keys, saves the results and shows them to the students. After that students can no longer change their answers.</span>
+  <span class="muted">To check <b>one exercise</b>, open the unit and click <b>Check this exercise now</b> above that exercise. “Check the whole unit” is for the end of a unit: it marks <b>all exercises</b> of all <b>submitted</b> work against the keys and shows the results; after that students can no longer change any answers in the unit.</span>
   <label class="row" style="margin-top:10px"><input type="checkbox" id="show-correct" ${T.showCorrect ? "checked" : ""}> Show students the correct answers to their mistakes</label></div>
   <table class="t"><tr><th>#</th><th>Unit</th><th>Access for the group</th><th>Results</th></tr>${rows}</table>`;
 }
@@ -396,11 +422,13 @@ document.addEventListener("click", (e) => {
     "select-student": () => { T.selected = b.dataset.uid; if (route().tool !== "works") location.hash = "#tools/works"; else render(true); setTimeout(() => $("#detail")?.scrollIntoView({ behavior: "smooth" }), 50); },
     "save-grades": () => saveGrades(b.dataset.uid),
     "return": () => guard(async () => {
-      const note = prompt("Return this work to the student for revision.\nComment for the student (optional): what should be improved?", "");
+      const st = T.students.find((x) => x.uid === b.dataset.uid);
+      const note = prompt(`Return the work of ${st?.name || "this student"} for revision.\nComment for the student (optional): what should be improved?\n\nExercises you have already checked stay closed.`, "");
       if (note === null) return;
       await updateDoc(doc(db, "submissions", subId(T.unitId, b.dataset.uid)), { status: "draft", returnNote: note.trim().slice(0, 1000), returnedAt: serverTimestamp() });
       toast("The work has been returned to the student.");
     }),
+    "docx": () => downloadDocx(u, b.dataset.ver, b),
     "import": () => importCourse(),
     "delete-unit": () => deleteUnit(u),
     "create-group": () => createGroup(),
@@ -432,7 +460,8 @@ async function releaseUnit(gid, unitId) {
     const subs = (await getDocs(query(collection(db, "submissions"), where("groupId", "==", gid), where("unitId", "==", unitId))))
       .docs.map((d) => d.data()).filter((s) => s.status === "submitted");
     const drafts = T.unitId === unitId ? T.subs.filter((s) => s.status === "draft").length : 0;
-    if (!confirm(`Check the work and show the results to the students?\nSubmitted: ${subs.length}${drafts ? `\nNot submitted (drafts): ${drafts}. These will not be checked and can no longer be edited.` : ""}`)) return;
+    const un = T.units.find((x) => x.id === unitId);
+    if (!confirm(`Check ALL exercises of Unit ${un ? unitNum(un) : ""} and show the results to the students?\nThis closes the whole unit: students can no longer change any answers.\n(To check one exercise, use the button above that exercise instead.)\n\nSubmitted: ${subs.length}${drafts ? `\nNot submitted (drafts): ${drafts}. These will not be checked and can no longer be edited.` : ""}`)) return;
     const prev = Object.fromEntries((await getDocs(query(collection(db, "results"), where("groupId", "==", gid), where("unitId", "==", unitId))))
       .docs.map((d) => [d.data().uid, d.data()]));
     let batch = writeBatch(db), n = 0;
@@ -474,7 +503,7 @@ function viewWorks() {
       <td class="num">${auto ? `${auto.score} / ${auto.max}` : ""}</td>
       <td class="num">${openTotal ? `${openDone} / ${openTotal}` : "—"}</td>
       <td class="num">${r ? `<b>${r.score} / ${r.max}</b>` : ""}</td>
-      <td>${s ? `<button class="btn small" data-act="select-student" data-uid="${esc(st.uid)}">Open</button>` : ""}</td>
+      <td>${s ? `<div class="row" style="flex-wrap:nowrap;gap:6px"><button class="btn small" data-act="select-student" data-uid="${esc(st.uid)}">Open</button>${returnBtn(s)}</div>` : ""}</td>
     </tr>`;
   }).join("");
   return head + `
@@ -482,6 +511,15 @@ function viewWorks() {
     <table class="t"><tr><th>Student</th><th>Status</th><th>Last change</th><th>Answered</th><th>Auto</th><th>Open</th><th>Total</th><th></th></tr>
     ${rows || `<tr><td colspan="8" class="muted">There are no students in this group yet.</td></tr>`}</table>
     <div id="detail">${T.selected ? studentDetail(T.selected, data) : ""}</div>`;
+}
+
+// "Return for revision": a submitted work becomes editable again; on a draft it sends the student a comment.
+// Not possible after the whole unit has been checked (results released): hide those results first.
+function returnBtn(s) {
+  if (!s) return "";
+  if (group()?.releasedUnits.includes(T.unitId))
+    return `<button class="btn small" disabled title="The whole unit has been checked. Click “Hide” in Access &amp; results first.">Return for revision</button>`;
+  return `<button class="btn small" data-act="return" data-uid="${esc(s.uid)}" title="${s.status === "submitted" ? "The student can change the answers and submit again" : "The student sees your comment at the top of the unit"}">Return for revision</button>`;
 }
 
 function studentDetail(uid, data) {
@@ -508,7 +546,7 @@ function studentDetail(uid, data) {
     <div class="row" style="justify-content:space-between">
       <h2 style="margin:0">${esc(st.name)} <span class="muted" style="font-size:16px">· auto-checked ${auto.score}/${auto.max}</span></h2>
       <div class="row">
-        ${sub.status === "submitted" && !group()?.releasedUnits.includes(T.unitId) ? `<button class="btn small" data-act="return" data-uid="${esc(uid)}">Return for revision</button>` : ""}
+        ${returnBtn(sub)}
         <button class="btn small primary" data-act="save-grades" data-uid="${esc(uid)}">Save marks</button>
       </div>
     </div>
@@ -623,7 +661,9 @@ function viewContent() {
   const rows = T.units.map((u) => `<tr>
     <td class="num">${esc(u.order)}</td><td><code>${esc(u.id)}</code></td><td>${u.status === "soon" ? esc(u.title) : `<a href="#${esc(u.id)}">${esc(u.title)}</a>`}</td>
     <td>${u.status === "soon" ? `<span class="pill off">coming soon</span>` : `<span class="pill on">${(u.sections || []).length} sections</span>`}</td>
-    <td><button class="btn small danger" data-act="delete-unit" data-unit="${esc(u.id)}">Delete</button></td></tr>`).join("");
+    <td>${u.status === "soon" ? "" : `<button class="btn small" data-act="docx" data-unit="${esc(u.id)}" data-ver="student" title="Student's Book in Word">Student .docx</button>
+      <button class="btn small" data-act="docx" data-unit="${esc(u.id)}" data-ver="teacher" title="Teacher's Book in Word, with keys and notes">Teacher .docx</button>`}
+      <button class="btn small danger" data-act="delete-unit" data-unit="${esc(u.id)}">Delete</button></td></tr>`).join("");
   return pageHead("Teaching tools", "Course content", "Units are imported from a JSON file that you keep on your computer.") + `
   <div class="box">
     <h3 style="margin-top:0">Import units from JSON</h3>
@@ -650,6 +690,7 @@ function stripExercise(b, seen, where) {
       if (answer === undefined || answer === "") throw new Error(`Exercise ${b.id}, item ${it.id}: no answer`);
       keys[rest.id] = answer;
     }
+    else if (b.kind === "open" && answer) keys[rest.id] = answer;   // model answer, teacher only
     return rest;
   });
   return { ex: { ...b, type: "exercise", items }, keys };

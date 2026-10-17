@@ -12,7 +12,7 @@ const course = readFileSync(new URL("../content-private/test-fixture.json", impo
 
 const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" }).catch(() => chromium.launch());
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-await ctx.route("**/js/fb.js", (r) => r.fulfill({ contentType: "text/javascript", body: mock }));
+await ctx.route("**/js/fb.js*", (r) => r.fulfill({ contentType: "text/javascript", body: mock }));
 // LanguageTool: подставной ответ (в песочнице нет доступа к api.languagetool.org)
 let ltCalls = 0;
 await ctx.route("https://api.languagetool.org/**", async (r) => {
@@ -284,6 +284,15 @@ await t.fill('#detail .g-comment[data-ex="w2"]', "Good topic sentence; add one m
 await t.click("#detail [data-act=save-grades] >> nth=0");
 await t.waitForSelector("text=Marks saved");
 await shot(t, "03-teacher-works");
+
+step("Кнопка «Return for revision» видна в таблице; возврат работы студенту");
+await t.waitForSelector("tr:has-text('Boris Petrov') [data-act=return]");
+await t.click("tr:has-text('Boris Petrov') [data-act=return]");
+await s2.waitForSelector(".ub-ret", { timeout: 5000 });
+await s2.waitForSelector("#submit-unit");
+await shot(s2, "19-student-returned");
+await s2.click("#submit-unit");
+await s2.waitForSelector(".ub-sub");
 
 step("Результаты не видны студенту до включения проверки");
 assert.equal(await s1.locator(".ub-res").count(), 0);

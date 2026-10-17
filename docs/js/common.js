@@ -8,12 +8,13 @@ export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
 // регистр, апострофы, пробелы, знаки препинания и сокращения (don't = do not) не важны
 const CONTR = [[/\bcan't\b|\bcan not\b/g, "cannot"], [/\bwon't\b/g, "will not"], [/\bshan't\b/g, "shall not"],
   [/n't\b/g, " not"], [/'m\b/g, " am"], [/'re\b/g, " are"], [/'ve\b/g, " have"], [/'ll\b/g, " will"]];
-export function norm(s) {
+// punct = true: commas, colons, semicolons and question/exclamation marks count (punctuation exercises)
+export function norm(s, punct = false) {
   let t = String(s ?? "")
     .toLowerCase()
     .replace(/[’‘`´]/g, "'")
     .replace(/[“”"«»]/g, " ")
-    .replace(/[,!?;:]/g, " ")
+    .replace(punct ? /\s*([,!?;:])\s*/g : /[,!?;:]/g, punct ? "$1 " : " ")
     .replace(/\.+(\s|$)/g, " ");
   for (const [re, to] of CONTR) t = t.replace(re, to);
   return t.replace(/\s+/g, " ").trim();
@@ -78,14 +79,18 @@ export function keyText(key) {
 // the answer shown to the student after checking: the first accepted variant
 export const firstKey = (key) => expandKey(Array.isArray(key) ? key[0] ?? "" : key ?? "")[0].replace(/\s+/g, " ").trim();
 
-export function isCorrect(given, key) {
+export function isCorrect(given, key, opts = {}) {
   if (given == null || norm(given) === "") return false;
+  const P = !!opts.punct;
   const variants = (Array.isArray(key) ? key : [key]).flatMap(expandKey);
-  // "'d" can mean "had" or "would": try both
-  let gs = [norm(given)];
-  for (let i = 0; i < 3 && gs.some((x) => /'d\b/.test(x)); i++)
-    gs = gs.flatMap((x) => (/'d\b/.test(x) ? [x.replace(/'d\b/, " had"), x.replace(/'d\b/, " would")] : [x])).map((x) => x.replace(/\s+/g, " "));
-  const keysN = new Set(variants.map(norm));
+  // "'d" can mean "had" or "would": try both, in the answer and in the key
+  const expandD = (list) => {
+    for (let i = 0; i < 3 && list.some((x) => /'d\b/.test(x)); i++)
+      list = list.flatMap((x) => (/'d\b/.test(x) ? [x.replace(/'d\b/, " had"), x.replace(/'d\b/, " would")] : [x])).map((x) => x.replace(/\s+/g, " "));
+    return list;
+  };
+  const gs = expandD([norm(given, P)]);
+  const keysN = new Set(expandD(variants.map((v) => norm(v, P))));
   return gs.some((x) => keysN.has(x));
 }
 
@@ -99,7 +104,7 @@ export function gradeAuto(content, answers, keys) {
     for (const it of ex.items || []) {
       const given = answers?.[ex.id]?.[it.id] ?? "";
       const key = keys?.[ex.id]?.[it.id];
-      const ok = isCorrect(given, key);
+      const ok = isCorrect(given, key, { punct: ex.punct });
       items[ex.id][it.id] = { given, ok, correct: firstKey(key) };
       max += 1;
       if (ok) score += 1;
@@ -115,7 +120,7 @@ export function gradeExercise(ex, answers, keys) {
   for (const it of ex.items || []) {
     const given = answers?.[it.id] ?? "";
     const key = keys?.[it.id];
-    const ok = isCorrect(given, key);
+    const ok = isCorrect(given, key, { punct: ex.punct });
     items[it.id] = { given, ok, correct: firstKey(key) };
     if (ok) score += 1;
   }
@@ -167,6 +172,8 @@ export function renderBlocks(blocks, exOpts, numPrefix = "") {
     if (b.type === "image") return renderImages([b], b.layout);
     if (b.type === "images") return renderImages(b.items || [], b.layout || "grid");
     if (b.type === "audio") return renderAudio(b);
+    if (b.type === "video") return renderVideo(b);
+    if (b.type === "speaking") return `<div class="block-spk">${speakingHTML(b, "blk-" + (b.id || hashStr(JSON.stringify(b))))}</div>`;
     if (b.type === "exercise") { n += 1; return renderExercise(b, { num: numPrefix ? `${numPrefix}.${n}` : String(n), ...exOpts(b) }); }
     return "";
   }).join("\n");
@@ -183,6 +190,7 @@ export function renderExercise(ex, o = {}) {
   const options = ex.kind === "match" && ex.showOptionList !== false
     ? `<div class="opt-list">${(ex.options || []).map((op) => `<b>${esc(op.id)}</b>&nbsp;${op.text}`).join(" &nbsp;&middot;&nbsp; ")}</div>` : "";
 
+  const inlineCtl = {};
   const items = (ex.items || []).map((it) => {
     const val = a[it.id] ?? "";
     const r = o.auto?.[it.id];
@@ -195,8 +203,12 @@ export function renderExercise(ex, o = {}) {
 
     if (ex.kind === "gap") {
       const size = it.size || ex.size || 14;
-      const input = `<input class="gap ${ex.box ? "box" : ""} ${mark}" ${attrs} value="${esc(val)}" size="${size}" ${ex.box ? `style="width:${size + 1}ch"` : ""} ${NOAUTO}>`;
-      body = it.text.includes("___") ? it.text.replace("___", input) : `<span class="li-t">${it.text}</span>${input}`;
+      // "choices": the word is chosen from a dropdown list instead of being typed
+      const input = it.choices
+        ? `<select class="gap ${mark}" ${attrs}><option value="">choose…</option>${it.choices.map((c) => `<option value="${esc(c)}" ${val === c ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`
+        : `<input class="gap ${ex.box ? "box" : ""} ${mark}" ${attrs} value="${esc(val)}" size="${size}" ${ex.box ? `style="width:${size + 1}ch"` : ""} ${NOAUTO}>`;
+      if (ex.inline) { inlineCtl[it.id] = `${ex.inlineNums === false ? "" : `<span class="gn">${esc(it.id)}</span>`}${input}${corr}${keyHint}`; return ""; }
+      body = (it.text || "").includes("___") ? it.text.replace("___", input) : `<span class="li-t">${it.text || ""}</span>${input}`;
       body += corr + keyHint;
     } else if (ex.kind === "match") {
       const opts = (ex.options || []).map((op) =>
@@ -227,13 +239,16 @@ export function renderExercise(ex, o = {}) {
       }
       const minW = it.minWords || ex.minWords;
       const wc = minW ? `<div class="wc"><span class="wc-n" data-wc="${esc(ex.id)}:${esc(it.id)}">${countWords(val)}</span> words <span class="muted">· at least ${minW}</span></div>` : "";
-      body = `${it.text}<textarea class="open-answer" rows="${it.rows || 5}" ${attrs} ${NOAUTO} placeholder="${o.readOnly ? "" : "Type your answer here…"}">${esc(val)}</textarea>${wc}${o.itemExtra ? o.itemExtra(it.id) : ""}${grade}`;
+      const model = o.key && o.key[it.id] ? `<div class="keyhint model"><b>Model answer:</b> ${esc(keyText(o.key[it.id]))}</div>` : "";
+      body = `${it.text}${model}<textarea class="open-answer" rows="${it.rows || 5}" ${attrs} ${NOAUTO} placeholder="${o.readOnly ? "" : "Type your answer here…"}">${esc(val)}</textarea>${wc}${o.itemExtra ? o.itemExtra(it.id) : ""}${grade}`;
     }
     return `<li${play ? ' class="has-play"' : ""}>${play}${play ? `<div class="li-body">${body}</div>` : body}</li>`;
   }).join("\n");
 
   const count = (ex.items || []).length;
   let body = `<ol class="items ${ex.layout === "two" ? "two" : ""} ${ex.wide ? "wide" : ""} ${ex.quotes ? "quotes" : ""}">${items}</ol>`;
+  // "inline": a whole text (html) with {{itemId}} where each gap goes
+  if (ex.inline) body = `<div class="inline-text">${ex.inline.replace(/\{\{([\w-]+)\}\}/g, (m, id) => inlineCtl[id] ?? m)}</div>`;
   if (ex.kind === "match" && ex.display === "letters") {
     // as in the printed workbook: type the letter next to each phrase, meanings listed on the right
     const left = (ex.items || []).map((it) => {
@@ -361,7 +376,7 @@ export function renderFlashcards(b, num = "") {
   const data = esc(JSON.stringify(cards));
   const style = b.style === "discussion" ? "discussion" : "words";
   return `<section class="fc ${style === "discussion" ? "fc-disc" : ""}" data-cards="${data}" data-i="0" data-style="${style}">
-    <div class="fc-h">${num ? `<span class="ex-n">${esc(num)}</span>` : `<span class="ic">🃏</span>`}<span class="ex-t">${esc(b.title || "Flashcards")}</span></div>
+    <div class="fc-h">${num ? `<span class="ex-n">${esc(num)}</span>` : `<span class="ic"></span>`}<span class="ex-t">${esc(b.title || "Flashcards")}</span></div>
     ${b.rubric ? `<p class="ex-i">${b.rubric}</p>` : ""}
     <div class="fc-stage">${fcCard(cards[0], 0, cards.length, style)}</div>
     <div class="fc-nav">
@@ -380,8 +395,8 @@ function fcCard(c, i, n, style) {
     <span class="fc-face fc-front"><span class="lbl">Card ${i + 1}</span><span class="q">${esc(c.front)}</span></span></div>`;
   return `<button type="button" class="fc-card" data-fc="flip" aria-label="Turn the card over">
     <span class="fc-inner">
-      <span class="fc-face fc-front"><span class="w">${esc(c.front)}</span><span class="hint">Click to see the translation</span></span>
-      <span class="fc-face fc-back"><span class="w2">${esc(c.front)}</span><span class="tr">${esc(c.back)}</span>${c.example ? `<span class="eg">${esc(c.example)}</span>` : ""}</span>
+      <span class="fc-face fc-front"><span class="w">${esc(c.front)}</span>${c.ipa ? `<span class="ipa">${esc(c.ipa)}</span>` : ""}<span class="hint">Click to see the translation</span></span>
+      <span class="fc-face fc-back"><span class="w2">${esc(c.front)}</span>${c.ipa ? `<span class="ipa">${esc(c.ipa)}</span>` : ""}<span class="tr">${esc(c.back)}</span>${c.example ? `<span class="eg">${esc(c.example)}</span>` : ""}</span>
     </span></button>`;
 }
 let fcWired = false;
@@ -425,14 +440,31 @@ export function wireFlashcards(root = document) {
 // ---------------------------------------------------------------------
 const mediaSrc = (src) => esc(String(src || "").replace(/^\/+/, ""));
 function renderImages(items, layout) {
-  const figs = items.map((it) => `<figure class="pic">
-      <img src="${mediaSrc(it.src)}" alt="${esc(it.alt || it.caption || "")}" loading="lazy" draggable="false">
+  const figs = items.map((it) => `<figure class="pic" data-file="${esc(String(it.src || "").split("/").pop())}">
+      <img src="${mediaSrc(it.src)}" alt="${esc(it.alt || it.caption || "")}" loading="lazy" draggable="false" onerror="this.parentNode.classList.add('missing')">
       ${it.caption || it.label ? `<figcaption class="cap">${it.label ? `<b>${esc(it.label)}</b>` : ""}${it.caption ? esc(it.caption) : ""}</figcaption>` : ""}
     </figure>`).join("");
   return `<div class="pics ${items.length > 1 ? (layout === "row" ? "row" : "grid") : "one"}">${figs}</div>`;
 }
+// speaking timers with a voice recorder: drawn by speaking.js (registered there)
+let speakingImpl = () => "";
+export function registerSpeaking(fn) { speakingImpl = fn; }
+const speakingHTML = (t, key) => speakingImpl(t, key);
+export function hashStr(s) { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) | 0; return (h >>> 0).toString(36); }
+
+// video from Rutube (or another site that allows embedding): b.src = embed address, b.url = page to open if the player does not load
+function renderVideo(b) {
+  const src = String(b.src || "");
+  const ok = /^https:\/\//.test(src);
+  return `<div class="video"><div class="vid-t">${esc(b.title || "Watch")}</div>
+    ${ok ? `<div class="vid-box"><iframe src="${esc(src)}" title="${esc(b.title || "Video")}" allow="clipboard-write; autoplay; encrypted-media; fullscreen; picture-in-picture" allowfullscreen loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe></div>` : ""}
+    ${b.url ? `<div class="vid-n">If the video does not play, <a href="${esc(b.url)}" target="_blank" rel="noopener">open it on ${esc(b.site || "Rutube")}</a>.</div>` : ""}
+    ${b.note ? `<div class="vid-n">${esc(b.note)}</div>` : ""}
+  </div>`;
+}
+
 function renderAudio(b) {
-  return `<div class="audio"><div class="au-ic">🎧</div><div class="au-b">
+  return `<div class="audio"><div class="au-ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg></div><div class="au-b">
       <div class="au-t">${esc(b.title || "Listen")}</div>
       <audio controls preload="none" controlslist="nodownload noplaybackrate" src="${mediaSrc(b.src)}"></audio>
       ${b.note ? `<div class="au-n">${esc(b.note)}</div>` : ""}

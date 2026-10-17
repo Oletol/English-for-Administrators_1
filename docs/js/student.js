@@ -4,20 +4,22 @@ import {
   auth, db, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
   sendPasswordResetEmail, signOut, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, orderBy,
   serverTimestamp,
-} from "./fb.js";
-import { COURSE_TITLE } from "./firebase-config.js";
+} from "./fb.js?v=20261017c";
+import { COURSE_TITLE } from "./firebase-config.js?v=20261017c";
 import {
   esc, renderBlocks, readInput, fmtTime, friendlyError, authFormHTML, wireAuthForm, subId, exercisesOf, isAuto,
   isTeacherChecked, wireFlashcards, countWords,
-} from "./common.js";
-import { initShell, renderUnitNav, wireUnitNav } from "./shell.js";
-import { feedbackHTML } from "./writing.js";
+} from "./common.js?v=20261017c";
+import { initShell, renderUnitNav, wireUnitNav } from "./shell.js?v=20261017c";
+import { feedbackHTML } from "./writing.js?v=20261017c";
+import "./speaking.js?v=20261017c";
 
 const $ = (s) => document.querySelector(s);
 const S = {
   user: null, profile: null, group: null, units: [],
   content: {},   // unitId -> content | null (нет доступа)
   sub: {},       // unitId -> {answers, status, updatedAt, dirty}
+  server: {},    // unitId -> answers as the database has them (needed for exercises the teacher has checked)
   result: {},    // unitId -> result | null
   exr: {},       // unitId -> results of exercises the teacher has checked one by one
   exrVer: 0,
@@ -101,7 +103,7 @@ function stopAll() {
   Object.values(S.resultUnsub).forEach((u) => u()); S.resultUnsub = {};
   Object.values(S.attUnsub).forEach((u) => u()); S.attUnsub = {};
   Object.values(S.tresUnsub).forEach((u) => u()); S.tresUnsub = {};
-  Object.assign(S, { profile: null, group: null, units: [], content: {}, sub: {}, result: {}, exr: {}, att: {}, tcontent: {}, tres: {}, tdraft: {} });
+  Object.assign(S, { profile: null, group: null, units: [], content: {}, sub: {}, server: {}, result: {}, exr: {}, att: {}, tcontent: {}, tres: {}, tdraft: {} });
 }
 
 let groupUnsub = null;
@@ -109,6 +111,7 @@ function subscribeGroup(gid) {
   groupUnsub?.();
   groupUnsub = onSnapshot(doc(db, "groups", gid), (snap) => {
     S.group = snap.exists() ? snap.data() : { openUnits: [], releasedUnits: [] };
+    Object.keys(S.sub).forEach(lockChecked);
     $("#me-group").textContent = "Group: " + (S.group.name || gid);
     syncUnitSubscriptions();
     renderNav(); renderMain();
@@ -123,7 +126,7 @@ const isReleased = (id) => !!S.group?.releasedUnits?.includes(id);
 function syncUnitSubscriptions() {
   for (const key of Object.keys(S.unitUnsub)) {
     const id = key.replace(/^(sub|exr):/, "");
-    if (!isOpen(id)) { S.unitUnsub[key](); delete S.unitUnsub[key]; delete S.content[id]; delete S.sub[id]; delete S.exr[id]; }
+    if (!isOpen(id)) { S.unitUnsub[key](); delete S.unitUnsub[key]; delete S.content[id]; delete S.sub[id]; delete S.server[id]; delete S.exr[id]; }
   }
   for (const id of Object.keys(S.resultUnsub)) {
     if (!isReleased(id)) { S.resultUnsub[id](); delete S.resultUnsub[id]; delete S.result[id]; }
@@ -151,7 +154,8 @@ function ensureUnit(unitId) {
     const server = snap.exists() ? snap.data() : { answers: {}, status: "none" };
     const cur = S.sub[unitId];
     if (!cur) {
-      S.sub[unitId] = { ...server, dirty: false };
+      S.sub[unitId] = { ...server, answers: structuredClone(server.answers || {}), dirty: false };
+      S.server[unitId] = server.answers || {};
       // локальная копия новее серверной? (например, вкладку закрыли до отправки)
       const local = readLocal(unitId);
       const serverMs = server.updatedAt?.toMillis?.() || 0;
@@ -163,8 +167,10 @@ function ensureUnit(unitId) {
     } else if (!snap.metadata.hasPendingWrites) {
       // обновляем статус; ответы — только если у нас нет несохранённых правок
       Object.assign(cur, { status: server.status, submittedAt: server.submittedAt, updatedAt: server.updatedAt || cur.updatedAt, returnNote: server.returnNote, returnedAt: server.returnedAt });
-      if (!cur.dirty) cur.answers = server.answers || {};
+      S.server[unitId] = server.answers || {};
+      if (!cur.dirty) cur.answers = structuredClone(server.answers || {});
     }
+    lockChecked(unitId);
     syncUnitSubscriptions();
     renderNav(); renderMain();
   }, () => { S.sub[unitId] ??= { answers: {}, status: "none", dirty: false }; renderMain(); });
@@ -339,9 +345,24 @@ function scheduleSave(unitId) {
   saveTimer = setTimeout(() => saveDraft(unitId), SAVE_DELAY);
 }
 
-async function saveDraft(unitId, status = "draft") {
+// An exercise the teacher has checked is closed: its answers stay exactly as they were checked.
+// If this browser still has different (unsaved) answers there, the database would refuse to save
+// the whole draft, and nothing typed afterwards would be saved. So the checked answers always win.
+function lockChecked(unitId) {
+  const sub = S.sub[unitId];
+  if (!sub || S.server[unitId] === undefined) return;
+  const srv = S.server[unitId];
+  sub.answers ??= {};
+  for (const exId of S.group?.releasedEx?.[unitId] || []) {
+    if (srv[exId] !== undefined) sub.answers[exId] = structuredClone(srv[exId]);
+    else delete sub.answers[exId];
+  }
+}
+
+async function saveDraft(unitId, status = "draft", retry = true) {
   const sub = S.sub[unitId];
   if (!sub || (!sub.dirty && status === "draft")) return;
+  lockChecked(unitId);
   sub.dirty = false;
   const data = {
     uid: S.user.uid, groupId: S.profile.groupId, unitId,
@@ -359,10 +380,16 @@ async function saveDraft(unitId, status = "draft") {
     sub.updatedAt = new Date();
     sub.status = status;
     if (status === "submitted") sub.submittedAt = new Date();
+    S.server[unitId] = structuredClone(data.answers);
     clearLocal(unitId);
     setSaveState("✓ Saved " + fmtTime(new Date()));
   } catch (e) {
     sub.dirty = true;
+    // the teacher may have just checked an exercise: take the checked answers and try once more
+    if (retry && /permission/i.test(String(e?.code || e?.message))) {
+      lockChecked(unitId);
+      return saveDraft(unitId, status, false);
+    }
     setSaveState("⚠ Not saved: " + friendlyError(e));
     throw e;
   }
@@ -578,3 +605,37 @@ async function submitTest(key, ask) {
   submitting = false;
   renderMain();
 }
+
+// ------------------------------------------------------------------ the book cannot be translated by the browser
+// The page asks browsers not to translate it (translate="no", meta google notranslate). A hidden probe sentence is left
+// translatable on purpose: if any translator (Chrome, Yandex, Edge, Safari) changes it, the book is hidden until the
+// student switches the translation off and reloads the page.
+function guardTranslation() {
+  const probe = document.getElementById("tr-probe");
+  if (!probe) return;
+  const ORIGINAL = probe.textContent;
+  const html = document.documentElement;
+  let shown = false;
+  const translated = () =>
+    probe.textContent !== ORIGINAL || probe.querySelector("font") ||
+    /\btranslated-(ltr|rtl)\b/.test(html.className) || (html.lang && !/^en\b/i.test(html.lang));
+  const block = () => {
+    if (shown || !translated()) return;
+    shown = true;
+    const app = document.getElementById("app");
+    if (app) app.style.visibility = "hidden";
+    const el = document.createElement("div");
+    el.className = "no-translate";
+    el.setAttribute("translate", "no");
+    el.innerHTML = `<div class="nt-card"><h3>Translation is turned off</h3>
+      <p>This course book must be read in English. Please switch off the translation in your browser (choose <b>Show original</b>),
+      then reload the page.</p></div>`;
+    document.body.appendChild(el);
+  };
+  const mo = new MutationObserver(block);
+  mo.observe(probe, { childList: true, characterData: true, subtree: true });
+  mo.observe(html, { attributes: true, attributeFilter: ["class", "lang"] });
+  setInterval(block, 2000);
+  block();
+}
+guardTranslation();
