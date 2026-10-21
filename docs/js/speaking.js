@@ -1,7 +1,7 @@
 // Speaking: timers with an in-browser voice recorder (from the msupm2 course engine).
 // The recording never leaves the browser: it is kept in memory as a blob, played back here and,
 // if the student wants, saved to their own computer with "Download". Reloading the page clears it.
-import { registerSpeaking, esc } from "./common.js?v=20261017c";
+import { registerSpeaking, esc } from "./common.js?v=20261021a";
 
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const SPK = new Map();   // key -> state (survives re-rendering of the page)
@@ -89,21 +89,41 @@ async function spkAction(b) {
   const el = b.closest(".spk"), key = el.dataset.spk, st = state(el), act = b.dataset.spkAct;
   if (act === "start") { st.running ? stopTimer(st) : startTimer(key); }
   if (act === "reset") { stopTimer(st); st.left = st.sec; if (st.rec) stopRec(key); }
-  if (act === "rec") { st.rec ? stopRec(key) : await startRec(key); }
+  if (act === "rec") {
+    try { st.rec ? stopRec(key) : await startRec(key); }
+    catch (e) {
+      st.stream?.getTracks().forEach((t) => t.stop()); st.stream = null; stopMeter(st); st.rec = null;
+      st.err = "The recording could not start (" + (e?.name || e?.message || "error") + "). Please reload the page and try again, or use Google Chrome.";
+    }
+  }
   syncKey(key);
 }
 
-function pickType() {
+// Safari records reliably only in mp4; Chrome and Firefox in webm / ogg
+const IS_SAFARI = /^((?!chrome|chromium|crios|android|edg).)*safari/i.test(navigator.userAgent);
+function typeList() {
   if (typeof MediaRecorder === "undefined") return null;
-  for (const t of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"])
-    if (MediaRecorder.isTypeSupported?.(t)) return t;
-  return "";
+  const all = IS_SAFARI ? ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"] : ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
+  return [...all.filter((t) => { try { return MediaRecorder.isTypeSupported?.(t); } catch { return false; } }), ""];
+}
+// A recorder that really starts: the formats are tried one by one, because some browsers
+// say a format is "supported" and then refuse to record in it. Before this fix such a refusal
+// stopped everything silently: the microphone was on, but nothing was recorded.
+function makeRecorder(stream) {
+  let last = null;
+  for (const type of typeList()) {
+    try {
+      const rec = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+      rec.start(1000);
+      return { rec, type };
+    } catch (e) { last = e; }
+  }
+  throw last || new Error("MediaRecorder");
 }
 async function startRec(key) {
   const st = SPK.get(key);
   st.err = "";
-  const type = pickType();
-  if (type === null || !navigator.mediaDevices?.getUserMedia) { st.err = "This browser cannot record sound. Please try Chrome, Edge, Firefox or Safari."; return; }
+  if (typeList() === null || !navigator.mediaDevices?.getUserMedia) { st.err = "This browser cannot record sound. Please try Chrome, Edge, Firefox or Safari."; return; }
   if (!window.isSecureContext) { st.err = "Recording works only on a secure (https) page."; return; }
   try {
     const p = await navigator.permissions?.query?.({ name: "microphone" });
@@ -128,25 +148,37 @@ async function startRec(key) {
     return;
   }
   st.err = "";
+  let made;
+  try { made = makeRecorder(st.stream); } catch (e) {
+    st.stream.getTracks().forEach((t) => t.stop()); st.stream = null;
+    st.err = "The browser opened the microphone but could not record (" + (e?.name || "error") + "). Please try Google Chrome.";
+    return;
+  }
+  const { rec, type } = made;
   startMeter(st, key);
-  const rec = new MediaRecorder(st.stream, type ? { mimeType: type } : undefined);
   const chunks = [];
   const t0 = Date.now();
   st.t0 = t0; st.loud = false;
-  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-  rec.onstop = () => {
-    const mime = rec.mimeType || type || "audio/webm";
+  let saved = false;
+  const save = () => {
+    if (saved) return;
+    saved = true;
+    const mime = (rec.mimeType || type || "audio/webm").split(";")[0];
     const blob = new Blob(chunks, { type: mime });
     const ext = /mp4/.test(mime) ? "m4a" : /ogg/.test(mime) ? "ogg" : "webm";
-    const url = URL.createObjectURL(blob);
-    st.takes.push({ url, dur: (Date.now() - t0) / 1000, name: `speaking-${key}-take${st.takes.length + 1}.${ext}` });
-    if (!blob.size) st.err = "The recording is empty: the microphone sent no sound. Check which microphone the browser uses (the icon in the address bar) and try again.";
+    if (blob.size) {
+      const url = URL.createObjectURL(blob);
+      st.takes.push({ url, dur: (Date.now() - t0) / 1000, name: `speaking-${key}-take${st.takes.length + 1}.${ext}` });
+    } else st.err = "The recording is empty: the microphone sent no sound. Check which microphone the browser uses (the icon in the address bar) and try again.";
     stopMeter(st);
     st.stream?.getTracks().forEach((t) => t.stop());
     st.stream = null;
     syncKey(key);
   };
-  rec.start(1000);
+  rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  rec.onstop = () => setTimeout(save, 50);          // the last piece of data may come just after "stop"
+  rec.onerror = (e) => { st.err = "Recording stopped because of an error (" + (e?.error?.name || "error") + "). Please try again or use Google Chrome."; save(); };
+  st.save = save;
   st.rec = rec;
   if (st.sec && !st.running) startTimer(key);
 }
@@ -155,7 +187,9 @@ function startMeter(st, key) {
   try {
     actx ??= new (window.AudioContext || window.webkitAudioContext)();
     if (actx.state === "suspended") actx.resume();
-    const src = actx.createMediaStreamSource(st.stream);
+    // the level meter listens to a copy of the stream, so that it never takes the sound away from the recorder
+    st.meterStream = st.stream.clone ? st.stream.clone() : st.stream;
+    const src = actx.createMediaStreamSource(st.meterStream);
     const an = actx.createAnalyser();
     an.fftSize = 512;
     src.connect(an);
@@ -174,6 +208,8 @@ function stopMeter(st) {
   if (!st.meter) return;
   clearInterval(st.meter.iv);
   try { st.meter.src.disconnect(); } catch {}
+  if (st.meterStream && st.meterStream !== st.stream) st.meterStream.getTracks().forEach((t) => t.stop());
+  st.meterStream = null;
   st.meter = null; st.level = 0;
 }
 // Chrome writes webm files without a duration: the player shows 0:00 until the end. Find the real length.
@@ -190,7 +226,10 @@ function fixDuration(a) {
 function stopRec(key) {
   const st = SPK.get(key);
   if (!st?.rec) return;
-  try { st.rec.stop(); } catch {}
+  const rec = st.rec, save = st.save;
+  try { rec.requestData?.(); } catch {}
+  try { rec.stop(); } catch { save?.(); }
+  setTimeout(() => save?.(), 2500);                    // in case the browser never reports "stop"
   st.rec = null;
   if (st.running) stopTimer(st);
 }

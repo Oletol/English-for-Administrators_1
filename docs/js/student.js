@@ -4,15 +4,15 @@ import {
   auth, db, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
   sendPasswordResetEmail, signOut, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, orderBy,
   serverTimestamp,
-} from "./fb.js?v=20261017c";
-import { COURSE_TITLE } from "./firebase-config.js?v=20261017c";
+} from "./fb.js?v=20261021a";
+import { COURSE_TITLE } from "./firebase-config.js?v=20261021a";
 import {
   esc, renderBlocks, readInput, fmtTime, friendlyError, authFormHTML, wireAuthForm, subId, exercisesOf, isAuto,
-  isTeacherChecked, wireFlashcards, countWords,
-} from "./common.js?v=20261017c";
-import { initShell, renderUnitNav, wireUnitNav } from "./shell.js?v=20261017c";
-import { feedbackHTML } from "./writing.js?v=20261017c";
-import "./speaking.js?v=20261017c";
+  isTeacherChecked, wireFlashcards, countWords, DONE, doneMap, exerciseNumbers, planTag,
+} from "./common.js?v=20261021a";
+import { initShell, renderUnitNav, wireUnitNav } from "./shell.js?v=20261021a";
+import { feedbackHTML } from "./writing.js?v=20261021a";
+import "./speaking.js?v=20261021a";
 
 const $ = (s) => document.querySelector(s);
 const S = {
@@ -181,7 +181,11 @@ function route() {
   const [unit, section] = location.hash.replace(/^#/, "").split("/");
   return { unit: unit || null, section: section || null };
 }
-window.addEventListener("hashchange", async () => { await flushSave(); renderNav(); renderMain(); window.scrollTo(0, 0); });
+window.addEventListener("hashchange", async () => {
+  const keep = pendingScroll;
+  await flushSave(); renderNav(); renderMain();
+  if (!keep) window.scrollTo(0, 0);
+});
 
 // ------------------------------------------------------------------ nav
 function renderNav() {
@@ -256,7 +260,9 @@ function renderMain() {
   const res = released ? S.result[unit.id] : undefined;
   const readOnly = released || sub.status === "submitted";
   const relEx = S.group.releasedEx?.[unit.id] || [];
-  const viewKey = `${unit.id}/${sec.id}/${readOnly}/${!!res}/${relEx.join(",")}/${(S.group.feedbackEx?.[unit.id] || []).join(",")}/${S.exrVer}`;
+  const done = doneMap(sub.answers);
+  const plan = S.group.plan?.[unit.id] || {};
+  const viewKey = `${unit.id}/${sec.id}/${readOnly}/${!!res}/${relEx.join(",")}/${(S.group.feedbackEx?.[unit.id] || []).join(",")}/${S.exrVer}/${JSON.stringify(done)}/${JSON.stringify(plan)}`;
 
   // do not re-render while the student is typing (keeps the cursor in place)
   const active = document.activeElement;
@@ -273,10 +279,16 @@ function renderMain() {
       const fbOn = (S.group.feedbackEx?.[unit.id] || []).includes(ex.id);
       const fb = fbOn && !res ? S.exr[unit.id]?.feedback?.[ex.id] : null;
       const fbAt = S.exr[unit.id]?.feedbackAt?.[ex.id];
+      const isDone = !!done[ex.id];
+      const factor = res ? res.factors?.[ex.id] : exDone ? S.exr[unit.id]?.factors?.[ex.id] : undefined;
       return {
         itemExtra: fb ? (itemId) => feedbackHTML(fb[itemId], { checkedAt: fmtTime(fbAt) }) : null,
         answers: sub.answers?.[ex.id] || {},
-        readOnly: readOnly || exDone,
+        readOnly: readOnly || exDone || isDone,
+        headExtra: planTag(plan[ex.id]),
+        factor,
+        cls: isDone || exDone ? "is-done" : "",
+        after: readOnly || exDone ? "" : doneFootHTML(ex, isDone, sub.answers?.[ex.id]),
         auto: res ? (isAuto(ex) ? res.auto?.[ex.id] || {} : null) : exDone ? S.exr[unit.id]?.items?.[ex.id] || {} : undefined,
         manual: res?.manual?.[ex.id],
         showPending: !!res,
@@ -284,7 +296,60 @@ function renderMain() {
       };
     }, `${unitNum(unit)}.${secIdx}`) + pagerHTML(unit, c, sec);
   renderUnitBar(unit, sub, released, res);
+  if (pendingScroll) { const id = pendingScroll; pendingScroll = null; setTimeout(() => scrollToEx(id), 30); }
 }
+
+// ------------------------------------------------------------------ "Done" for each exercise
+// A student marks every exercise as done when they have finished it. The exercise is then locked
+// (they can open it again with "Change my answers"), and the unit can be submitted only when
+// all its exercises are done.
+function doneFootHTML(ex, isDone, ans) {
+  if (isDone) return `<div class="ex-foot done"><span class="ok-mark">✓ Done</span>
+    <button class="btn small" type="button" data-undone="${esc(ex.id)}">Change my answers</button></div>`;
+  const total = (ex.items || []).length;
+  const filled = (ex.items || []).filter((it) => String(ans?.[it.id] ?? "").trim()).length;
+  return `<div class="ex-foot"><span class="muted">${filled} of ${total} answered</span>
+    <button class="btn small primary" type="button" data-done="${esc(ex.id)}">Done</button></div>`;
+}
+let pendingScroll = null;
+function scrollToEx(exId) {
+  const el = document.getElementById("ex-" + exId);
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "start" });
+  el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 1600);
+}
+$("#content").addEventListener("click", (e) => {
+  const d = e.target.closest?.("[data-done],[data-undone]");
+  if (!d) return;
+  e.preventDefault();
+  const unitId = $("#content").dataset.unit, sub = S.sub[unitId];
+  if (!sub || sub.status === "submitted" || isReleased(unitId)) return;
+  const exId = d.dataset.done || d.dataset.undone;
+  if (d.dataset.done) {
+    const ex = exercisesOf(S.content[unitId]).find((x) => x.id === exId);
+    const empty = (ex?.items || []).filter((it) => !String(sub.answers?.[exId]?.[it.id] ?? "").trim()).length;
+    if (empty && !confirm(`${empty} of ${(ex.items || []).length} items are still empty. Mark this exercise as done anyway?`)) return;
+  }
+  sub.answers ??= {};
+  const map = { ...doneMap(sub.answers) };
+  if (d.dataset.done) map[exId] = "1"; else delete map[exId];
+  sub.answers[DONE] = map;
+  sub.dirty = true;
+  writeLocal(unitId, sub.answers);
+  clearTimeout(saveTimer);
+  saveDraft(unitId).catch(() => {});
+  renderMain();
+});
+// links to the exercises that are not done yet (in the bar above the unit)
+document.addEventListener("click", (e) => {
+  const a = e.target.closest?.("[data-goto-ex]");
+  if (!a) return;
+  e.preventDefault();
+  const [unitId, secId, exId] = a.dataset.gotoEx.split("|");
+  const target = `#${unitId}/${secId}`;
+  if (location.hash === target || (route().unit === unitId && route().section === secId)) scrollToEx(exId);
+  else { pendingScroll = exId; location.hash = target; }
+});
 
 function pagerHTML(unit, c, sec) {
   const i = c.sections.indexOf(sec);
@@ -310,8 +375,12 @@ function renderUnitBar(unit, sub, released, res) {
     const ret = sub.returnedAt && sub.status === "draft"
       ? `<div class="ub ub-ret"><b>Your teacher has returned this work for revision${sub.returnedAt?.toDate ? ` (${fmtTime(sub.returnedAt)})` : ""}.</b>
          ${sub.returnNote ? `<span class="ret-note">${esc(sub.returnNote)}</span>` : ""}<span class="muted">Make your changes and submit the unit again.</span></div>` : "";
+    const p = doneProgress(unit, sub);
     html = ret + `<div class="ub"><span id="save-state" class="muted">${sub.dirty ? "Unsaved changes…" : sub.updatedAt ? "Draft saved " + fmtTime(sub.updatedAt) : "Your answers are saved automatically"}</span>
-      <button class="btn primary" id="submit-unit">Submit this unit</button></div>`;
+      <span class="ub-done"><b>${p.done} / ${p.total}</b> exercises done</span>
+      <button class="btn primary" id="submit-unit" ${p.left.length ? `disabled title="Mark every exercise as Done first"` : ""}>Submit this unit</button>
+      ${p.left.length ? `<div class="ub-left">Click <b>Done</b> under each exercise when you finish it. You can submit the unit when all exercises are done. Not done yet:
+        ${p.left.slice(0, 12).map((x) => `<a href="#${esc(unit.id)}/${esc(x.sectionId)}" data-goto-ex="${esc(unit.id)}|${esc(x.sectionId)}|${esc(x.id)}">${esc(x.num)}</a>`).join(" ")}${p.left.length > 12 ? ` <span class="muted">and ${p.left.length - 12} more</span>` : ""}</div>` : ""}</div>`;
   }
   bar.innerHTML = html;
   $("#submit-unit")?.addEventListener("click", () => submitUnit(unit.id));
@@ -405,6 +474,9 @@ window.addEventListener("pagehide", () => flushSave());
 
 async function submitUnit(unitId) {
   const c = S.content[unitId], sub = S.sub[unitId];
+  const unit = S.units.find((u) => u.id === unitId);
+  const p = doneProgress(unit, sub);
+  if (p.left.length) { alert(`Please finish the unit first: ${p.left.length} ${p.left.length === 1 ? "exercise is" : "exercises are"} not marked as Done (${p.left.map((x) => x.num).join(", ")}).`); return; }
   const total = exercisesOf(c).reduce((n, ex) => n + (ex.items || []).length, 0);
   const filled = exercisesOf(c).reduce((n, ex) => n + (ex.items || []).filter((it) => String(sub.answers?.[ex.id]?.[it.id] ?? "").trim()).length, 0);
   if (!confirm(`Submit your work? You have answered ${filled} of ${total} items.\nYou will not be able to change your answers after submitting.`)) return;
@@ -415,6 +487,16 @@ async function submitUnit(unitId) {
     syncUnitSubscriptions();
     renderMain();
   } catch (e) { alert(friendlyError(e)); }
+}
+
+// exercises of the unit that the student has marked as done (exercises the teacher has already checked count as done)
+function doneProgress(unit, sub) {
+  const c = S.content[unit.id];
+  const nums = exerciseNumbers(c, unitNum(unit));
+  const done = doneMap(sub.answers), checked = S.group?.releasedEx?.[unit.id] || [];
+  const all = exercisesOf(c).map((ex) => ({ ...ex, num: nums[ex.id] }));
+  const left = all.filter((ex) => !done[ex.id] && !checked.includes(ex.id));
+  return { total: all.length, done: all.length - left.length, left };
 }
 
 function setSaveState(t) { const el = $("#save-state"); if (el) el.textContent = t; }

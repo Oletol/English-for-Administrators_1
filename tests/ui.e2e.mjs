@@ -33,6 +33,17 @@ const page = async (url) => {
 };
 const shot = (p, n) => p.screenshot({ path: `${SHOTS}/${n}.png`, fullPage: false });
 const step = (t) => console.log("•", t);
+// every exercise must be marked "Done" before the unit can be submitted: go through the links in the unit bar
+async function markAllDone(p) {
+  for (let guard = 0; guard < 60; guard++) {
+    const btns = p.locator("#content [data-done]");
+    if (await btns.count()) { await btns.first().click(); await p.waitForTimeout(80); continue; }
+    const link = p.locator(".ub-left a").first();
+    if (!(await link.count())) break;
+    await link.click();
+    await p.waitForTimeout(250);
+  }
+}
 
 // --- seed: аккаунт преподавателя (в реальном проекте — через консоль Firebase)
 const t = await page("/teacher.html");
@@ -253,7 +264,7 @@ await t.waitForSelector("text=Anna Ivanova");
 await t.waitForSelector(".pill.warn:text('draft')");
 
 step("Студент 1 сдаёт работу");
-await s1.click("#submit-unit");
+await markAllDone(s1); await s1.click("#submit-unit");
 await s1.waitForSelector(".ub-sub");
 await s1.click('.sb-item:has-text("Grammar in Use")');
 assert.equal(await s1.locator(sel("g1", "1")).isDisabled(), true);
@@ -272,7 +283,7 @@ await s2.click('.sb-uh[data-unit="u1"]');
 await s2.click('.sb-item:has-text("Grammar in Use")');
 await s2.fill(sel("g1", "1"), "sends");
 await s2.fill(sel("g1", "2"), "is give");
-await s2.click("#submit-unit");
+await markAllDone(s2); await s2.click("#submit-unit");
 await s2.waitForSelector(".ub-sub");
 
 step("Преподаватель оценивает открытый ответ");
@@ -291,7 +302,7 @@ await t.click("tr:has-text('Boris Petrov') [data-act=return]");
 await s2.waitForSelector(".ub-ret", { timeout: 5000 });
 await s2.waitForSelector("#submit-unit");
 await shot(s2, "19-student-returned");
-await s2.click("#submit-unit");
+await markAllDone(s2); await s2.click("#submit-unit");
 await s2.waitForSelector(".ub-sub");
 
 step("Результаты не видны студенту до включения проверки");

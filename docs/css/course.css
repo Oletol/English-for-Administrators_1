@@ -509,3 +509,51 @@ details.rule>summary.rule-h:hover .rule-toggle{background:#eef4fb}
 @media print{details.rule .rule-toggle{display:none}}
 /* verb in brackets inside a gapped text */
 i.vb{font-family:var(--sans);font-size:.88em;color:var(--plum);white-space:nowrap}
+
+/* ---------------- Done button, In-Class / HA, live statistics, attendance ---------------- */
+.ex-foot{display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:10px 18px;border-top:1px solid var(--line2);background:#fbfcfe;font-size:13.5px}
+.ex-foot.done{background:var(--ok2)}
+.ex-foot .ok-mark{color:var(--ok);font-weight:800;margin-right:auto}
+.ex.is-done{border-color:#b9dcc7}
+.ex.flash{box-shadow:0 0 0 3px var(--gold2);transition:box-shadow .3s}
+.ex-plan{font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;border-radius:14px;padding:3px 9px;flex:none;border:1px solid}
+.ex-plan.class{background:var(--teal2);color:var(--teal);border-color:#b7dcd7}
+.ex-plan.home{background:var(--gold3);color:#8a5d13;border-color:#f0dcb2}
+.ex-score.low{background:var(--gold3);color:#8a5d13;cursor:help}
+.ub-done{font-size:13.5px;color:var(--ink2);margin-left:auto}
+.ub-left{flex-basis:100%;font-size:13.5px;color:var(--ink2);line-height:1.9}
+.ub-left a{display:inline-block;font-family:var(--mono);font-size:12.5px;font-weight:700;margin:0 2px;padding:0 6px;border:1px solid var(--line);border-radius:5px;background:var(--bg);text-decoration:none;line-height:1.6}
+.ub-left a:hover{border-color:var(--gold);background:var(--gold3)}
+.tip{font-size:13.5px}
+.ex-bar.tbar{flex-direction:column;align-items:stretch;gap:7px}
+.tb-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.seg{display:inline-flex;border:1px solid #d8bccd;border-radius:8px;overflow:hidden;background:#fff;flex:none}
+.seg button{font:inherit;font-size:12px;font-weight:800;letter-spacing:.04em;border:none;background:none;padding:4px 11px;cursor:pointer;color:var(--ink2)}
+.seg button + button{border-left:1px solid #d8bccd}
+.seg button:hover{background:var(--bg)}
+.seg button.on[data-as=class]{background:var(--teal);color:#fff}
+.seg button.on[data-as=home]{background:var(--gold);color:#fff}
+.tb-done{display:inline-flex;align-items:center;gap:5px;font-weight:700;color:var(--ink2);cursor:pointer}
+.tb-done.on{color:var(--ok)}
+.tb-date{font:inherit;font-size:13px;padding:2px 6px;border:1px solid var(--line);border-radius:6px;background:#fff}
+.tstat{font-size:12.5px;color:var(--ink2)}
+.bad-n{color:var(--bad);font-weight:700}
+.ib{display:inline-flex;gap:4px;margin-left:8px;font-family:var(--mono);font-size:11.5px;font-weight:700;vertical-align:middle;line-height:1.55;cursor:help}
+.ib-ok{color:var(--ok);background:var(--ok2);border-radius:4px;padding:0 5px}
+.ib-bad{color:var(--bad);background:var(--bad2);border-radius:4px;padding:0 5px}
+.mist{margin:0 18px 16px;padding:10px 14px;border:1px dashed #e3b9b0;border-radius:var(--r2);background:#fffafa;font-size:14px}
+.mist-h{font-size:10.5px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--bad);margin-bottom:6px}
+.mist table.t{margin:0;box-shadow:none}
+.mist table.t td{vertical-align:top;padding:6px 10px}
+.mw{color:var(--bad);font-weight:600}
+.jt th.jc,.jt td.jc{text-align:center;padding-left:4px;padding-right:4px;min-width:56px}
+.att{font:inherit;font-weight:800;width:34px;height:28px;border-radius:7px;border:1px solid;cursor:pointer}
+.att.pres{background:var(--ok2);border-color:#b9dcc7;color:var(--ok)}
+.att.abs{background:var(--bad2);border-color:#e3b9b0;color:var(--bad)}
+.jdel{font:inherit;font-size:10.5px;font-weight:600;letter-spacing:0;text-transform:none;border:none;background:none;color:#f0c6dd;cursor:pointer;text-decoration:underline;padding:0}
+.jfoot td{font-weight:700;background:var(--bg)}
+.jx{display:inline-block;font-family:var(--mono);font-size:12px;font-weight:700;padding:0 6px;border-radius:5px;margin:1px 2px}
+.jx.class{background:var(--teal2);color:var(--teal)}
+.jx.home{background:var(--gold3);color:#8a5d13}
+@media print{.ex-foot,.ex-bar{display:none!important}}
+.jt td.jc.num{text-align:center}

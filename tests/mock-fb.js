@@ -23,8 +23,10 @@ const SENT = Symbol("sentinel");
 export const serverTimestamp = () => ({ [SENT]: "ts" });
 export const arrayUnion = (...a) => ({ [SENT]: "union", a });
 export const arrayRemove = (...a) => ({ [SENT]: "remove", a });
+export const deleteField = () => ({ [SENT]: "delete" });
 function resolve(v, old) {
   if (v && v[SENT] === "ts") return { __ts: Date.now() };
+  if (v && v[SENT] === "delete") return undefined;
   if (v && v[SENT] === "union") { const r = [...(old || [])]; v.a.forEach((x) => r.includes(x) || r.push(x)); return r; }
   if (v && v[SENT] === "remove") return (old || []).filter((x) => !v.a.includes(x));
   if (v instanceof Date) return { __ts: v.getTime() };
@@ -102,7 +104,8 @@ function applyPaths(obj, data) {
     let cur = out;
     for (const p of parts.slice(0, -1)) { cur[p] ??= {}; cur = cur[p]; }
     const last = parts.at(-1);
-    cur[last] = resolve(v, cur[last]);
+    const nv = resolve(v, cur[last]);
+    if (nv === undefined) delete cur[last]; else cur[last] = nv;
   }
   return out;
 }
