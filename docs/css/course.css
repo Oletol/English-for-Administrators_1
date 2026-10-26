@@ -557,3 +557,10 @@ i.vb{font-family:var(--sans);font-size:.88em;color:var(--plum);white-space:nowra
 .jx.home{background:var(--gold3);color:#8a5d13}
 @media print{.ex-foot,.ex-bar{display:none!important}}
 .jt td.jc.num{text-align:center}
+
+/* speaking: recording turned into text (blocks with "transcribe") */
+.spk-tr{flex:1 1 100%;font-size:13.5px;line-height:1.5;color:var(--ink2);background:#eef6f5;border:1px solid #cfe5e2;border-radius:8px;padding:8px 12px}
+.spk-tr.bad{color:var(--bad);background:#fbf0ef;border-color:#efd3d0}
+textarea.open-answer.transcript{background:#fbfaf6;cursor:default}
+.sp-line{font-size:12.5px;color:var(--mut);margin:2px 0 6px}
+.sp-line:empty{display:none}

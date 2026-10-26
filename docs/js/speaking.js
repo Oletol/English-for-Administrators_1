@@ -1,7 +1,8 @@
 // Speaking: timers with an in-browser voice recorder (from the msupm2 course engine).
 // The recording never leaves the browser: it is kept in memory as a blob, played back here and,
 // if the student wants, saved to their own computer with "Download". Reloading the page clears it.
-import { registerSpeaking, esc } from "./common.js?v=20261021a";
+import { registerSpeaking, esc } from "./common.js?v=20261026a";
+import { transcribeBlob, metricsLine } from "./transcribe.js?v=20261026a";
 
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const SPK = new Map();   // key -> state (survives re-rendering of the page)
@@ -10,7 +11,7 @@ const RING = 2 * Math.PI * 14;
 
 function speakingHTML(t, key) {
   const sec = Number(t.sec || 0), rec = t.record !== false;
-  return `<div class="spk" data-spk="${esc(key)}" data-sec="${sec}" data-rec="${rec ? 1 : 0}" translate="no">
+  return `<div class="spk" data-spk="${esc(key)}" data-sec="${sec}" data-rec="${rec ? 1 : 0}" data-tr="${esc(t.transcribe || "")}" translate="no">
     ${t.label ? `<span class="spk-lab">${esc(t.label)}</span>` : ""}
     ${sec ? `<svg class="spk-ring" viewBox="0 0 34 34" aria-hidden="true"><circle class="bgc" cx="17" cy="17" r="14"/><circle class="fgc" cx="17" cy="17" r="14" stroke-dasharray="${RING}" stroke-dashoffset="0"/></svg>
       <span class="spk-time">${fmtT(sec)}</span>` : ""}
@@ -19,7 +20,7 @@ function speakingHTML(t, key) {
       ${rec ? `<button class="btn small rec" type="button" data-spk-act="rec"><span class="rec-dot"></span><span class="rl">Record</span></button>` : ""}
     </div>
     ${rec ? `<div class="spk-live" hidden><span class="rec-dot"></span><span class="spk-rt">REC 00:00</span><span class="spk-meter"><i></i></span><span class="spk-quiet" hidden>No sound – check the microphone</span></div>
-      <div class="spk-takes"></div><p class="spk-note">${sec ? "Record also starts the timer. " : ""}Your recording stays in this browser: nobody else hears it, and it disappears when you reload or close the page. Use Download to keep a copy or to send it to your teacher.</p>` : ""}
+      <div class="spk-takes"></div><div class="spk-tr" hidden></div><p class="spk-note">${sec ? "Record also starts the timer. " : ""}Your recording stays in this browser: nobody else hears it, and it disappears when you reload or close the page. Use Download to keep a copy or to send it to your teacher.${t.transcribe ? " <b>Transcribe</b> turns your recording into text on this computer: the sound is not sent anywhere, only the text is saved in the exercise below. The first time, the browser downloads the speech program (about 90 MB), so use Wi-Fi." : ""}</p>` : ""}
   </div>`;
 }
 registerSpeaking(speakingHTML);
@@ -54,18 +55,25 @@ function syncSpk(el) {
   }
   const box = el.querySelector(".spk-takes");
   if (box) {
-    const sig = st.takes.map((t) => t.url).join("|") + st.err;
+    const tr = el.dataset.tr;
+    const sig = st.takes.map((t) => t.url).join("|") + st.err + (tr ? "|" + TR.busy : "");
     if (box.dataset.sig !== sig) {
       box.dataset.sig = sig;
       box.innerHTML = (st.err ? `<div class="spk-take" style="color:${/^Waiting/.test(st.err) ? "var(--mut)" : "var(--bad)"}">${esc(st.err)}</div>` : "")
         + st.takes.map((t, i) => `<div class="spk-take"><span class="tk-n">Take ${i + 1}</span><audio controls preload="metadata" src="${t.url}"></audio>
           <span class="muted" style="font-size:12px">${fmtT(Math.round(t.dur))}</span>
-          <a href="${t.url}" download="${esc(t.name)}">Download</a></div>`).join("");
+          <a href="${t.url}" download="${esc(t.name)}">Download</a>${tr ? `<button class="btn small primary" type="button" data-spk-act="tr" data-take="${i}" ${TR.busy ? "disabled" : ""}>Transcribe</button>` : ""}</div>`).join("");
       box.querySelectorAll("audio").forEach(fixDuration);
     }
   }
 }
 const syncKey = (key) => nodesOf(key).forEach(syncSpk);
+function syncTr(el) {
+  const st = state(el), box = el.querySelector(".spk-tr");
+  if (!box) return;
+  box.hidden = !st.trMsg;
+  if (box.dataset.msg !== st.trMsg) { box.dataset.msg = st.trMsg || ""; box.innerHTML = st.trMsg || ""; box.classList.toggle("bad", !!st.trBad); }
+}
 
 function tick(key) {
   const st = SPK.get(key);
@@ -89,6 +97,7 @@ async function spkAction(b) {
   const el = b.closest(".spk"), key = el.dataset.spk, st = state(el), act = b.dataset.spkAct;
   if (act === "start") { st.running ? stopTimer(st) : startTimer(key); }
   if (act === "reset") { stopTimer(st); st.left = st.sec; if (st.rec) stopRec(key); }
+  if (act === "tr") { await transcribeTake(el, key, +b.dataset.take); return; }
   if (act === "rec") {
     try { st.rec ? stopRec(key) : await startRec(key); }
     catch (e) {
@@ -234,6 +243,42 @@ function stopRec(key) {
   if (st.running) stopTimer(st);
 }
 
+// ------------------------------------------------------------------ recording into text
+const TR = { busy: false };
+const MB = (n) => Math.round(n / 1048576);
+async function transcribeTake(el, key, i) {
+  const st = SPK.get(key), take = st?.takes[i], exId = el.dataset.tr;
+  if (!take || TR.busy) return;
+  const msg = (h, bad = false) => { st.trMsg = h; st.trBad = bad; nodesOf(key).forEach(syncTr); };
+  const field = () => document.querySelector(`textarea[data-ex="${CSS.escape(exId)}"]`);
+  const f0 = field();
+  if (!f0) return msg("The exercise for the text is not on this page.", true);
+  if (f0.disabled) return msg("The exercise below is closed: it is marked <b>Done</b> or it has been checked. Click <b>Change my answers</b> under it first, then click Transcribe again.", true);
+  TR.busy = true; syncKey(key);
+  try {
+    const blob = await (await fetch(take.url)).blob();
+    const r = await transcribeBlob(blob, (p) => {
+      if (p.stage === "prepare") msg("Preparing the recording…");
+      if (p.stage === "load") msg(`Downloading the speech program: ${MB(p.loaded)} of ${MB(p.total)} MB. This happens only once on this computer.`);
+      if (p.stage === "ready") msg("The speech program is ready. Listening to your recording…");
+      if (p.stage === "run") msg(`Writing down what you said: part ${p.part} of ${p.parts}… (this can take a minute)`);
+    });
+    if (!r.text) return msg("No speech was found in this recording. Check the microphone, record again and click Transcribe.", true);
+    const f = field(), h = document.querySelector(`input[data-ex="_speech"][data-item="${CSS.escape(exId)}"]`);
+    if (!f || f.disabled) return msg("The exercise below was closed while the text was being written. Click <b>Change my answers</b> under it and click Transcribe again.", true);
+    f.value = r.text;
+    f.dispatchEvent(new Event("input", { bubbles: true }));
+    if (h) { h.value = JSON.stringify(r.metrics); h.dispatchEvent(new Event("input", { bubbles: true })); }
+    const line = document.querySelector(`[data-sp-line="${CSS.escape(exId)}"]`);
+    if (line) line.textContent = metricsLine(r.metrics);
+    msg(`Done: the text of Take ${i + 1} is in the exercise below. ${esc(metricsLine(r.metrics))}.`);
+    f.closest(".ex")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  } catch (e) {
+    console.warn(e);
+    msg("The recording could not be turned into text (" + esc(e?.message || "error") + "). Please try again in Google Chrome on a computer.", true);
+  } finally { TR.busy = false; nodesOf(key).forEach(syncSpk); }
+}
+
 let actx = null;
 function beep() {
   try {
@@ -254,5 +299,5 @@ let pending = false;
 new MutationObserver((ms) => {
   if (pending || !ms.some((m) => m.target.nodeType === 1 && !m.target.closest(".spk"))) return;
   pending = true;
-  requestAnimationFrame(() => { pending = false; $$(".spk").forEach(syncSpk); });
+  requestAnimationFrame(() => { pending = false; $$(".spk").forEach((el) => { syncSpk(el); syncTr(el); }); });
 }).observe(document.documentElement, { childList: true, subtree: true });

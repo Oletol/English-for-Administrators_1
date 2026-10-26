@@ -4,7 +4,7 @@ import { getAuth, connectAuthEmulator } from "https://www.gstatic.com/firebasejs
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager, connectFirestoreEmulator,
 } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js?v=20261021a";
+import { firebaseConfig } from "./firebase-config.js?v=20261026a";
 
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);

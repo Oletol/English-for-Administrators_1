@@ -1,5 +1,6 @@
 // Общие функции: отрисовка упражнений, автопроверка, подсчёт баллов.
 // Используются и студенческой, и преподавательской страницей.
+import { metricsLine } from "./transcribe.js?v=20261026a";
 
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -288,7 +289,13 @@ export function renderExercise(ex, o = {}) {
       const minW = it.minWords || ex.minWords;
       const wc = minW ? `<div class="wc"><span class="wc-n" data-wc="${esc(ex.id)}:${esc(it.id)}">${countWords(val)}</span> words <span class="muted">· at least ${minW}</span></div>` : "";
       const model = o.key && o.key[it.id] ? `<div class="keyhint model"><b>Model answer:</b> ${esc(keyText(o.key[it.id]))}</div>` : "";
-      body = `${it.text}${model}<textarea class="open-answer" rows="${it.rows || 5}" ${attrs} ${NOAUTO} placeholder="${o.readOnly ? "" : "Type your answer here…"}">${esc(val)}</textarea>${wc}${o.itemExtra ? o.itemExtra(it.id) : ""}${grade}`;
+      // "transcript": the text is written by the speech recogniser (speaking block with "transcribe"), not typed
+      const tr = ex.transcript && it === ex.items[0];
+      let spLine = "";
+      if (tr) { try { spLine = o.speech ? metricsLine(JSON.parse(o.speech)) : ""; } catch {} }
+      const extra = tr ? `<input type="hidden" data-ex="_speech" data-item="${esc(ex.id)}" value="${esc(o.speech || "")}" ${dis}><div class="sp-line" data-sp-line="${esc(ex.id)}">${esc(spLine)}</div>` : "";
+      const ph = o.readOnly ? "" : tr ? "Record your answer above and click Transcribe: the text will appear here." : "Type your answer here…";
+      body = `${it.text}${model}<textarea class="open-answer ${tr ? "transcript" : ""}" rows="${it.rows || 5}" ${attrs} ${tr ? "readonly" : ""} ${NOAUTO} placeholder="${ph}">${esc(val)}</textarea>${extra}${wc}${o.itemExtra ? o.itemExtra(it.id) : ""}${grade}`;
     }
     return `<li${play ? ' class="has-play"' : ""}>${play}${play ? `<div class="li-body">${body}</div>` : body}</li>`;
   }).join("\n");

@@ -4,15 +4,15 @@ import {
   auth, db, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
   sendPasswordResetEmail, signOut, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, orderBy,
   serverTimestamp,
-} from "./fb.js?v=20261021a";
-import { COURSE_TITLE } from "./firebase-config.js?v=20261021a";
+} from "./fb.js?v=20261026a";
+import { COURSE_TITLE } from "./firebase-config.js?v=20261026a";
 import {
   esc, renderBlocks, readInput, fmtTime, friendlyError, authFormHTML, wireAuthForm, subId, exercisesOf, isAuto,
   isTeacherChecked, wireFlashcards, countWords, DONE, doneMap, exerciseNumbers, planTag,
-} from "./common.js?v=20261021a";
-import { initShell, renderUnitNav, wireUnitNav } from "./shell.js?v=20261021a";
-import { feedbackHTML } from "./writing.js?v=20261021a";
-import "./speaking.js?v=20261021a";
+} from "./common.js?v=20261026a";
+import { initShell, renderUnitNav, wireUnitNav } from "./shell.js?v=20261026a";
+import { feedbackHTML } from "./writing.js?v=20261026a";
+import "./speaking.js?v=20261026a";
 
 const $ = (s) => document.querySelector(s);
 const S = {
@@ -284,6 +284,7 @@ function renderMain() {
       return {
         itemExtra: fb ? (itemId) => feedbackHTML(fb[itemId], { checkedAt: fmtTime(fbAt) }) : null,
         answers: sub.answers?.[ex.id] || {},
+        speech: sub.answers?._speech?.[ex.id],
         readOnly: readOnly || exDone || isDone,
         headExtra: planTag(plan[ex.id]),
         factor,

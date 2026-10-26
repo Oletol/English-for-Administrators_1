@@ -2,7 +2,8 @@
 // Octanove C1–C2, Google 10,000 frequency list as a fallback) and use of the unit's vocabulary.
 // The check runs in the teacher's browser when the teacher clicks the button; the result is
 // saved for each student in exerciseResults and shown under their text.
-import { esc } from "./common.js?v=20261021a";
+import { esc } from "./common.js?v=20261026a";
+import { metricsLine } from "./transcribe.js?v=20261026a";
 
 const LT_URL = "https://api.languagetool.org/v2/check";
 const LT_LANG = "en-GB";
@@ -105,7 +106,8 @@ export function unitVocabulary(content) {
   const out = new Set();
   for (const s of content?.sections || [])
     for (const b of s.blocks || []) {
-      if (b.type === "flashcards") (b.cards || []).forEach((c) => out.add(c.front));
+      // discussion cards are questions, not vocabulary
+      if (b.type === "flashcards" && b.style !== "discussion") (b.cards || []).forEach((c) => out.add(c.front));
       if (Array.isArray(b.vocab)) b.vocab.forEach((v) => out.add(v));
     }
   return [...out];
@@ -158,8 +160,9 @@ export function feedbackHTML(fb, { checkedAt } = {}) {
   const total = v ? LEVELS.reduce((n, l) => n + v.counts[l], 0) || 1 : 1;
   const bars = v ? LEVELS.map((l) => `<span class="lvchip lv-${l}" title="${l}: ${v.counts[l]} words">${l} <b>${Math.round((100 * v.counts[l]) / total)}%</b></span>`).join("") : "";
   return `<div class="wfb">
-    <div class="wfb-h">Feedback on your text${checkedAt ? ` <span class="muted">· checked ${esc(checkedAt)}</span>` : ""}</div>
+    <div class="wfb-h">Feedback on your ${fb.speech ? "speaking" : "text"}${checkedAt ? ` <span class="muted">· checked ${esc(checkedAt)}</span>` : ""}</div>
     ${fb.grammarError ? `<p class="muted">The grammar check was not available this time.</p>` : ""}
+    ${fb.speech ? `<p class="wfb-line"><b>How you spoke:</b> ${esc(metricsLine(fb.speech))}</p><p class="wfb-line muted">The text was written by a computer from your recording. It can contain the computer’s mistakes, and it sometimes corrects a mistake you made, so listen to your recording too.</p>` : ""}
     <div class="wfb-text">${html}</div>
     ${issues ? `<ul class="wfb-issues">${issues}</ul>` : fb.grammarError ? "" : `<p class="wfb-ok">No grammar or spelling problems were found.</p>`}
     ${v ? `<div class="wfb-v"><span class="muted">${v.words} words</span> ${bars}</div>

@@ -4,16 +4,16 @@ import {
   auth, db, onAuthStateChanged, signInWithEmailAndPassword, sendPasswordResetEmail, signOut,
   doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, orderBy,
   writeBatch, arrayUnion, arrayRemove, serverTimestamp, deleteField,
-} from "./fb.js?v=20261021a";
-import { COURSE_TITLE } from "./firebase-config.js?v=20261021a";
+} from "./fb.js?v=20261026a";
+import { COURSE_TITLE } from "./firebase-config.js?v=20261026a";
 import {
   esc, renderBlocks, renderExercise, exercisesOf, isAuto, gradeAuto, buildResult, keyText, norm,
   fmtTime, friendlyError, authFormHTML, wireAuthForm, subId, KIND_LABEL, isTeacherChecked, gradeExercise, wireFlashcards, isManual,
   isCorrect, readInput, doneMap, isTranslation, exerciseNumbers, fmtDate, todayISO, answerLabel, r2,
-} from "./common.js?v=20261021a";
-import { initShell, renderUnitNav, wireUnitNav } from "./shell.js?v=20261021a";
-import { loadVocab, grammarCheck, vocabProfile, unitVocabulary, feedbackHTML, sleep } from "./writing.js?v=20261021a";
-import "./speaking.js?v=20261021a";
+} from "./common.js?v=20261026a";
+import { initShell, renderUnitNav, wireUnitNav } from "./shell.js?v=20261026a";
+import { loadVocab, grammarCheck, vocabProfile, unitVocabulary, feedbackHTML, sleep } from "./writing.js?v=20261026a";
+import "./speaking.js?v=20261026a";
 
 const $ = (s) => document.querySelector(s);
 const ls = {
@@ -279,7 +279,7 @@ async function downloadDocx(unitId, ver, btn) {
   try {
     const d = await loadUnitData(unitId);
     if (!d?.content) throw new Error("This unit has no content yet.");
-    const { exportUnitDocx, saveBlob } = await import("./export-docx.js?v=20261021a");
+    const { exportUnitDocx, saveBlob } = await import("./export-docx.js?v=20261026a");
     const teacher = ver === "teacher";
     const sections = d.content.sections.map((s) => ({ ...s, subtitle: (u.sections || []).find((m) => m.id === s.id)?.subtitle || s.subtitle || "" }));
     const blob = await exportUnitDocx({ courseTitle: COURSE_TITLE, unitNum: unitNum(u), unitTitle: u.title, sections,
@@ -568,6 +568,8 @@ async function checkWriting(gid, unitId, exId) {
         const text = String(texts[it.id] || "");
         if (!text.trim()) continue;
         fb[it.id] = { text, issues: issues[it.id] || [], grammarError, vocab: vocabProfile(text, V, phrases), unitTotal: phrases.length };
+        // a transcribed speaking task: the measurements of the speech (length, speed, pauses) go with the feedback
+        if (ex.transcript && it === ex.items[0] && s.answers?._speech?.[exId]) { try { fb[it.id].speech = JSON.parse(s.answers._speech[exId]); } catch {} }
       }
       await setDoc(doc(db, "exerciseResults", subId(unitId, s.uid)), {
         uid: s.uid, groupId: gid, unitId,
@@ -787,6 +789,7 @@ function studentDetail(uid, data) {
     return `<h3>${n}.${i + 1} ${esc(sec.title)}</h3>` + exs.map((ex, j) => renderExercise(ex, {
       num: `${n}.${i + 1}.${j + 1}`,
       answers: sub.answers?.[ex.id] || {},
+      speech: sub.answers?._speech?.[ex.id],
       readOnly: true,
       auto: isAuto(ex) ? auto.items[ex.id] : undefined,
       factor: f[ex.id],
