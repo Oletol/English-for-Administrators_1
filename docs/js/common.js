@@ -1,6 +1,6 @@
 // Общие функции: отрисовка упражнений, автопроверка, подсчёт баллов.
 // Используются и студенческой, и преподавательской страницей.
-import { metricsLine } from "./transcribe.js?v=20261101a";
+import { metricsLine } from "./transcribe.js?v=20261101b";
 
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -142,7 +142,7 @@ export function buildResult({ sub, content, keys, manual = {}, showCorrect = tru
   let mScore = 0, mMax = 0, pending = 0;
   for (const ex of exercisesOf(content)) {
     if (!isManual(ex)) continue;
-    for (const it of ex.items || []) {
+    for (const it of (ex.items || []).filter((x) => !x.plain)) {   // "plain": an extra line (a partner's name) that gets no points
       mMax += itemMax(ex, it);
       const g = manual?.[ex.id]?.[it.id];
       if (g && g.score !== null && g.score !== "" && g.score !== undefined) mScore += Number(g.score) * (factors[ex.id] ?? 1);
@@ -276,7 +276,7 @@ export function renderExercise(ex, o = {}) {
       const m = o.manual?.[it.id];
       const max = itemMax(ex, it);
       let grade = "";
-      if (o.grading) {
+      if (o.grading && !it.plain) {
         grade = `<div class="grade-box">
           <label>Score <input type="number" min="0" max="${max}" step="0.5" class="g-score" data-ex="${esc(ex.id)}" data-item="${esc(it.id)}" value="${esc(m?.score ?? "")}"> / ${max}</label>
           <textarea class="g-comment" rows="2" placeholder="Comment for the student" data-ex="${esc(ex.id)}" data-item="${esc(it.id)}">${esc(m?.comment ?? "")}</textarea>

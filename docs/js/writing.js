@@ -2,8 +2,8 @@
 // Octanove C1–C2, Google 10,000 frequency list as a fallback) and use of the unit's vocabulary.
 // The check runs in the teacher's browser when the teacher clicks the button; the result is
 // saved for each student in exerciseResults and shown under their text.
-import { esc } from "./common.js?v=20261101a";
-import { metricsLine } from "./transcribe.js?v=20261101a";
+import { esc } from "./common.js?v=20261101b";
+import { metricsLine } from "./transcribe.js?v=20261101b";
 
 const LT_URL = "https://api.languagetool.org/v2/check";
 const LT_LANG = "en-GB";
@@ -86,7 +86,10 @@ export function vocabProfile(text, V, unitPhrases = []) {
 const WILD = new Set(["something", "somebody", "someone", "sb", "sth", "one's"]);
 const DET = new Set(["a", "an", "the", "my", "your", "his", "her", "its", "our", "their", "this", "that", "these", "those", "some", "any"]);
 export function phraseUsed(phrase, toks) {
-  const p = tokens(phrase).map((t) => (WILD.has(t) ? "*" : DET.has(t) ? "?" : new Set(candidates(t))));
+  // the text tokens lose their endings 're, 's, 'll… (see vocabProfile), so the phrase tokens must lose them too:
+  // otherwise "I see where you're coming from" is never found
+  const p = tokens(phrase).map((t) => t.replace(/'(s|t|ll|re|ve|d|m)$/, "")).filter((t) => t && !NOT_WORDS.has(t))
+    .map((t) => (WILD.has(t) ? "*" : DET.has(t) ? "?" : new Set(candidates(t))));
   const sets = toks.map((t) => new Set(candidates(t)));
   const same = (a, b) => [...a].some((x) => b.has(x));
   const match = (i, j) => {

@@ -4,16 +4,16 @@ import {
   auth, db, onAuthStateChanged, signInWithEmailAndPassword, sendPasswordResetEmail, signOut,
   doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, orderBy,
   writeBatch, arrayUnion, arrayRemove, serverTimestamp, deleteField,
-} from "./fb.js?v=20261101a";
-import { COURSE_TITLE } from "./firebase-config.js?v=20261101a";
+} from "./fb.js?v=20261101b";
+import { COURSE_TITLE } from "./firebase-config.js?v=20261101b";
 import {
   esc, renderBlocks, renderExercise, exercisesOf, isAuto, gradeAuto, buildResult, keyText, norm,
   fmtTime, friendlyError, authFormHTML, wireAuthForm, subId, KIND_LABEL, isTeacherChecked, gradeExercise, wireFlashcards, isManual,
   isCorrect, readInput, doneMap, isTranslation, exerciseNumbers, fmtDate, todayISO, answerLabel, r2,
-} from "./common.js?v=20261101a";
-import { initShell, renderUnitNav, wireUnitNav } from "./shell.js?v=20261101a";
-import { loadVocab, grammarCheck, vocabProfile, unitVocabulary, feedbackHTML, sleep } from "./writing.js?v=20261101a";
-import "./speaking.js?v=20261101a";
+} from "./common.js?v=20261101b";
+import { initShell, renderUnitNav, wireUnitNav } from "./shell.js?v=20261101b";
+import { loadVocab, grammarCheck, vocabProfile, unitVocabulary, feedbackHTML, sleep } from "./writing.js?v=20261101b";
+import "./speaking.js?v=20261101b";
 
 const $ = (s) => document.querySelector(s);
 const ls = {
@@ -33,6 +33,7 @@ const T = {
   unsub: [], ctxUnsub: [],
   practice: {},          // unitId -> {exId: {itemId: value}}: what the teacher types in the unit (kept in this tab only)
   mistOpen: new Set(),   // exercises whose list of students' mistakes is open
+  spk: null,             // Speaking progress: {gid, loading, rows, at, error}
   journal: undefined,    // attendance of the current group: {lessons: {"2026-10-21": {absent: [uid]}}}
   unitViewKey: "",
 };
@@ -45,6 +46,7 @@ const TOOLS = [
   { id: "tests", icon: "⏱", title: "Tests", sub: "Timed tests: open, watch, check" },
   { id: "stats", icon: "📊", title: "Analytics", sub: "Difficult questions, heat map" },
   { id: "journal", icon: "📅", title: "Attendance", sub: "Lesson dates, present and absent" },
+  { id: "speaking", icon: "🎙", title: "Speaking progress", sub: "Recordings as text: how each student changes" },
   { id: "groups", icon: "👥", title: "Groups & students", sub: "Group codes, moving and removing students" },
   { id: "content", icon: "📦", title: "Course content", sub: "Import units and keys" },
 ];
@@ -216,7 +218,7 @@ function render(force = false) {
   if (r.unit) { $("#view").innerHTML = viewUnit(r); T.unitViewKey = unitViewKey(r); return; }
   const tool = TOOLS.find((t) => t.id === r.tool);
   $("#crumb").innerHTML = `<b>Teaching tools</b> &middot; ${tool.title}`;
-  const views = { access: viewAccess, works: viewWorks, tests: viewTests, stats: viewStats, content: viewContent, groups: viewGroups, journal: viewJournal };
+  const views = { access: viewAccess, works: viewWorks, tests: viewTests, stats: viewStats, content: viewContent, groups: viewGroups, journal: viewJournal, speaking: viewSpeaking };
   $("#view").innerHTML = views[r.tool]();
 }
 
@@ -279,7 +281,7 @@ async function downloadDocx(unitId, ver, btn) {
   try {
     const d = await loadUnitData(unitId);
     if (!d?.content) throw new Error("This unit has no content yet.");
-    const { exportUnitDocx, saveBlob } = await import("./export-docx.js?v=20261101a");
+    const { exportUnitDocx, saveBlob } = await import("./export-docx.js?v=20261101b");
     const teacher = ver === "teacher";
     const sections = d.content.sections.map((s) => ({ ...s, subtitle: (u.sections || []).find((m) => m.id === s.id)?.subtitle || s.subtitle || "" }));
     const blob = await exportUnitDocx({ courseTitle: COURSE_TITLE, unitNum: unitNum(u), unitTitle: u.title, sections,
@@ -560,11 +562,13 @@ async function checkWriting(gid, unitId, exId) {
       n++;
       const prog = document.querySelector("#wcheck-progress");
       if (prog) prog.textContent = `Checking ${n} of ${subs.length}…`;
-      const texts = s.answers[exId] || {};
+      const plainIds = new Set((ex.items || []).filter((it) => it.plain).map((it) => it.id));
+      const texts = Object.fromEntries(Object.entries(s.answers[exId] || {}).filter(([id]) => !plainIds.has(id)));
       let issues = {}, grammarError = false;
       try { issues = await grammarCheck(texts); } catch (e) { console.warn(e); grammarError = true; ltFailed++; }
       const fb = {};
       for (const it of ex.items || []) {
+        if (it.plain) continue;                     // a partner's name: nothing to check
         const text = String(texts[it.id] || "");
         if (!text.trim()) continue;
         fb[it.id] = { text, issues: issues[it.id] || [], grammarError, vocab: vocabProfile(text, V, phrases), unitTotal: phrases.length };
@@ -592,6 +596,122 @@ function accessBar(u, g) {
       ${rel ? `<button class="btn small danger" data-act="unrelease" data-unit="${esc(u.id)}">Hide whole-unit results</button>` : ""}
     </span>
     <span class="muted" style="flex-basis:100%;font-size:13px">To check one exercise, use the green button above it. The whole unit is checked only in <a href="#tools/access">Access &amp; results</a>.</span></div>`;
+}
+
+// ================================================================== Speaking progress
+// Every exercise with "transcript" holds the text that Whisper wrote from a student's recording (alone, or a pair
+// discussion recorded by one of the two). This page puts each student's recordings in order and shows how the
+// measurements change: speed, pauses, grammar suggestions (after "Check the writing now"), task phrases, word level.
+const LV_HIGH = ["B2", "C1", "C2"];
+async function loadSpeaking() {
+  const gid = T.gid;
+  T.spk = { gid, loading: true };
+  try {
+    const V = await loadVocab();
+    const tasks = [];
+    for (const u of [...T.units].sort((a, b) => unitNum(a) - unitNum(b))) {
+      const { content } = await loadUnitData(u.id);
+      if (!content) continue;
+      const nums = exerciseNumbers(content, unitNum(u));
+      for (const ex of exercisesOf(content)) if (ex.transcript) tasks.push({ u, ex, num: nums[ex.id] });
+    }
+    const [subs, exrs] = await Promise.all([
+      getDocs(query(collection(db, "submissions"), where("groupId", "==", gid))),
+      getDocs(query(collection(db, "exerciseResults"), where("groupId", "==", gid))),
+    ]);
+    const subOf = {}, exrOf = {};
+    subs.docs.forEach((d) => { const x = d.data(); subOf[subId(x.unitId, x.uid)] = x; });
+    exrs.docs.forEach((d) => { const x = d.data(); exrOf[subId(x.unitId, x.uid)] = x; });
+    const rows = [];
+    for (const sub of Object.values(subOf)) {
+      for (const { u, ex, num } of tasks) {
+        if (sub.unitId !== u.id) continue;
+        const it0 = ex.items[0];
+        const text = String(sub.answers?.[ex.id]?.[it0.id] || "").trim();
+        if (!text) continue;
+        let sp = null;
+        try { sp = JSON.parse(sub.answers?._speech?.[ex.id] || "null"); } catch {}
+        const partnerIt = ex.items.find((it) => it.plain);
+        const fb = exrOf[subId(u.id, sub.uid)]?.feedback?.[ex.id]?.[it0.id];
+        const fresh = fb && !fb.grammarError && String(fb.text || "").trim() === text;
+        const vp = vocabProfile(text, V, ex.vocab || []);
+        const lv = Object.values(vp.counts).reduce((n, c) => n + c, 0);
+        rows.push({
+          uid: sub.uid, num, title: ex.title, pair: !!ex.pair, text,
+          partner: partnerIt ? String(sub.answers?.[ex.id]?.[partnerIt.id] || "").trim() : "",
+          at: sp?.at || sub.updatedAt?.toMillis?.() || 0, atExact: !!sp?.at,
+          sp, words: vp.words,
+          per100: fresh ? (100 * (fb.issues || []).length) / Math.max(1, vp.words) : null,
+          stale: !!fb && !fb.grammarError && !fresh,
+          phrases: vp.unitUsed, phrasesTotal: (ex.vocab || []).length,
+          high: lv ? (100 * LV_HIGH.reduce((n, l) => n + (vp.counts[l] || 0), 0)) / lv : 0,
+        });
+      }
+    }
+    rows.sort((a, b) => a.at - b.at);
+    if (T.spk?.gid === gid) T.spk = { gid, rows, at: new Date(), tasks: tasks.length };
+  } catch (e) {
+    console.warn(e);
+    if (T.spk?.gid === gid) T.spk = { gid, error: friendlyError(e) };
+  }
+  if (route().tool === "speaking") render(true);
+}
+
+function viewSpeaking() {
+  const g = group();
+  const head = pageHead("Teaching tools", "Speaking progress",
+    "Every recording a student has turned into text, in the order they were made. Recordings made alone and pair discussions (one student records both voices) are marked, because their figures are not the same thing.");
+  if (!g) return head + `<div class="box">Choose a group at the top of the page.</div>`;
+  if (!T.spk || T.spk.gid !== T.gid) { loadSpeaking(); return head + `<p class="muted">Loading the recordings of group ${esc(g.name)}…</p>`; }
+  if (T.spk.loading) return head + `<p class="muted">Loading the recordings of group ${esc(g.name)}…</p>`;
+  if (T.spk.error) return head + `<div class="box">The data could not be loaded: ${esc(T.spk.error)} <button class="btn small" data-act="spk-reload">Try again</button></div>`;
+  const bar = `<div class="tb-row"><span class="muted">Group <b>${esc(g.name)}</b> · updated ${esc(fmtTime(T.spk.at))}</span><span class="sp" style="flex:1"></span>
+    <button class="btn small" data-act="spk-reload">Refresh</button></div>`;
+  const help = `<details class="box"><summary><b>How to read the figures</b></summary>
+    <ul>
+      <li><b>Spoke</b> – time with speech in the recording; <b>words per minute</b> – speed while speaking; <b>pauses</b> – silences longer than one second, per minute of recording.</li>
+      <li><b>Grammar per 100 words</b> – LanguageTool suggestions. It appears after you click <b>Check the writing now</b> above the exercise. The speech program sometimes corrects students’ mistakes, so the real number is higher; compare students with themselves, not with each other.</li>
+      <li><b>Task phrases</b> – phrases from the exercise list that were used (for a discussion: passing the turn, building on an idea, disagreeing, moving to a decision).</li>
+      <li><b>B2+ words</b> – the share of words from the higher levels of the word lists.</li>
+      <li>In a <b>pair discussion</b> the program does not separate the two voices: the figures describe the pair, and the text is in the account of the student who recorded it. The partner’s name is next to it.</li>
+    </ul></details>`;
+  if (!T.spk.tasks) return head + bar + `<div class="box">There are no exercises with speech turned into text in the imported units yet.</div>`;
+  if (!T.spk.rows.length) return head + bar + help + `<div class="box">No student has turned a recording into text yet.</div>`;
+  const tm = (sec) => `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, "0")}`;
+  const n1 = (x) => (Math.round(x * 10) / 10).toString();
+  const pauseRate = (r) => (r.sp?.total ? (r.sp.pauses * 60) / r.sp.total : null);
+  const diff = (a, b, digits = 0) => { const d = b - a, v = digits ? n1(Math.abs(d)) : Math.round(Math.abs(d)); return +v === 0 ? "no change" : (d > 0 ? "+" : "−") + v; };
+  const change = (rows) => {
+    if (rows.length < 2) return `<p class="muted">One recording so far: the changes will appear after the next one.</p>`;
+    const a = rows[0], b = rows[rows.length - 1], out = [];
+    if (a.sp?.wpm && b.sp?.wpm) out.push(`words per minute ${a.sp.wpm} then ${b.sp.wpm} (${diff(a.sp.wpm, b.sp.wpm)})`);
+    const pa = pauseRate(a), pb = pauseRate(b);
+    if (pa !== null && pb !== null) out.push(`pauses per minute ${n1(pa)} then ${n1(pb)} (${diff(pa, pb, 1)})`);
+    const ga = rows.find((r) => r.per100 !== null), gb = [...rows].reverse().find((r) => r.per100 !== null);
+    if (ga && gb && ga !== gb) out.push(`grammar per 100 words ${n1(ga.per100)} then ${n1(gb.per100)} (${diff(ga.per100, gb.per100, 1)})`);
+    out.push(`B2+ words ${Math.round(a.high)}% then ${Math.round(b.high)}% (${diff(a.high, b.high)})`);
+    return `<p><b>First and last recording (${esc(a.num)} and ${esc(b.num)}):</b> ${out.join(" · ")}.</p>`
+      + (a.pair !== b.pair ? `<p class="muted">One of them was made alone and the other in a pair, so compare with care.</p>` : "");
+  };
+  const row = (r) => `<tr>
+      <td><b>${esc(r.num)}</b> ${esc(r.title)}</td>
+      <td>${r.at ? esc((r.atExact ? "" : "about ") + new Date(r.at).toLocaleDateString("ru-RU")) : "—"}</td>
+      <td>${r.pair ? `pair${r.partner ? ` with ${esc(r.partner)}` : ""}` : "alone"}</td>
+      <td>${r.sp ? tm(r.sp.speech) + " / " + tm(r.sp.total) : "—"}</td>
+      <td>${r.words}</td>
+      <td>${r.sp?.wpm || "—"}</td>
+      <td>${r.sp ? `${r.sp.pauses} <span class="muted">(${n1(pauseRate(r))}/min)</span>` : "—"}</td>
+      <td>${r.per100 !== null ? n1(r.per100) : `<span class="muted">${r.stale ? "text changed after the check" : "not checked"}</span>`}</td>
+      <td title="${esc(r.phrases.join(", "))}">${r.phrasesTotal ? `${r.phrases.length} of ${r.phrasesTotal}` : "—"}</td>
+      <td>${Math.round(r.high)}%</td>
+    </tr>
+    <tr class="spk-text"><td colspan="10"><details><summary>Text${r.phrases.length ? ` · phrases: ${esc(r.phrases.join(", "))}` : ""}</summary><p>${esc(r.text)}</p></details></td></tr>`;
+  const byStudent = T.students.map((st) => ({ st, rows: T.spk.rows.filter((r) => r.uid === st.uid) }));
+  const cards = byStudent.map(({ st, rows }) => `<section class="card spk-card"><h3>${esc(st.name)} <span class="muted" style="font-weight:400;font-size:14px">${rows.length} ${rows.length === 1 ? "recording" : "recordings"}</span></h3>
+    ${rows.length ? change(rows) + `<div class="tscroll"><table class="t spk-t"><thead><tr><th>Exercise</th><th>Date</th><th>Recorded</th><th>Spoke</th><th>Words</th><th>Words per minute</th><th>Pauses</th><th>Grammar per 100 words</th><th>Task phrases</th><th>B2+ words</th></tr></thead>
+      <tbody>${rows.map(row).join("")}</tbody></table></div>` : `<p class="muted">No recordings turned into text yet.</p>`}
+  </section>`).join("");
+  return head + bar + help + `<style>.spk-card{margin:14px 0;padding:14px 18px}.spk-card b{display:inline;font-family:inherit;font-size:inherit;color:inherit;line-height:inherit}.spk-card h3{margin:0 0 6px}.spk-t td{vertical-align:top}.spk-text td{border-top:0;padding-top:0}.spk-text p{white-space:pre-wrap;margin:6px 0 10px;color:var(--ink,#222)}.tscroll{overflow-x:auto}</style>` + cards;
 }
 
 // ================================================================== Access & results
@@ -650,6 +770,7 @@ document.addEventListener("click", (e) => {
     "release": () => releaseUnit(T.gid, u),
     "check-ex": () => checkExercise(T.gid, u, b.dataset.ex),
     "check-writing": () => checkWriting(T.gid, u, b.dataset.ex),
+    "spk-reload": () => { T.spk = null; render(true); },
     "hide-writing": () => guard(async () => updateDoc(doc(db, "groups", T.gid), { [`feedbackEx.${u}`]: arrayRemove(b.dataset.ex) })),
     "uncheck-ex": () => guard(async () => {
       if (!confirm("Hide the results of this exercise from the students? They will be able to change their answers again.")) return;
@@ -738,7 +859,7 @@ function viewWorks() {
   const subBy = Object.fromEntries(T.subs.map((s) => [s.uid, s]));
   const exs = exercisesOf(data.content);
   const totalItems = exs.reduce((n, ex) => n + (ex.items || []).length, 0);
-  const openTotal = exs.filter((ex) => !isAuto(ex)).reduce((n, ex) => n + ex.items.length, 0);
+  const openTotal = exs.filter((ex) => !isAuto(ex)).reduce((n, ex) => n + ex.items.filter((it) => !it.plain).length, 0);
   const rows = T.students.map((st) => {
     const s = subBy[st.uid], r = T.results[st.uid];
     const filled = s ? exs.reduce((n, ex) => n + (ex.items || []).filter((it) => String(s.answers?.[ex.id]?.[it.id] ?? "").trim()).length, 0) : 0;
@@ -873,7 +994,7 @@ function viewStats() {
   }).sort((x, y) => x.pct - y.pct);
   const avg = Math.round(perStudent.reduce((n, p) => n + p.pct, 0) / perStudent.length);
   const autoEx = exs.filter(isAuto);
-  const openItems = exs.filter((ex) => !isAuto(ex)).reduce((n, ex) => n + ex.items.length, 0);
+  const openItems = exs.filter((ex) => !isAuto(ex)).reduce((n, ex) => n + ex.items.filter((it) => !it.plain).length, 0);
   const graded = Object.values(T.results).reduce((n, r) => n + (openItems - (r.manualPending ?? openItems)), 0);
 
   const wrongHTML = (w) => w.slice(0, 3).map(([ans, c]) => `“${esc(ans)}” ×${c}`).join(", ");

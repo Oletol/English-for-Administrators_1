@@ -6,7 +6,7 @@ const waiting = new Map();
 
 function getWorker() {
   if (worker) return worker;
-  worker = new Worker(new URL("./asr-worker.js?v=20261101a", import.meta.url), { type: "module" });
+  worker = new Worker(new URL("./asr-worker.js?v=20261101b", import.meta.url), { type: "module" });
   worker.onmessage = (e) => {
     const m = e.data;
     for (const w of waiting.values()) if (m.type === "progress") w.onProgress?.(m);
@@ -120,6 +120,7 @@ export async function transcribeBlob(blob, onProgress) {
     total: st.total, speech: st.speech, words,
     wpm: st.span > 3 ? Math.round(words / (st.span / 60)) : 0,
     pauses: st.pauses, longest: st.longest,
+    at: Date.now(),                 // when the text was made: the Speaking progress page puts the recordings in order
   };
   return { text, metrics };
 }
