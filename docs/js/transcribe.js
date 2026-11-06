@@ -6,7 +6,7 @@ const waiting = new Map();
 
 function getWorker() {
   if (worker) return worker;
-  worker = new Worker(new URL("./asr-worker.js?v=20261101b", import.meta.url), { type: "module" });
+  worker = new Worker(new URL("./asr-worker.js?v=20261106b", import.meta.url), { type: "module" });
   worker.onmessage = (e) => {
     const m = e.data;
     for (const w of waiting.values()) if (m.type === "progress") w.onProgress?.(m);

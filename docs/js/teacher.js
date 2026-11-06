@@ -4,17 +4,17 @@ import {
   auth, db, onAuthStateChanged, signInWithEmailAndPassword, sendPasswordResetEmail, signOut,
   doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, orderBy,
   writeBatch, arrayUnion, arrayRemove, serverTimestamp, deleteField,
-} from "./fb.js?v=20261101b";
-import { COURSE_TITLE } from "./firebase-config.js?v=20261101b";
+} from "./fb.js?v=20261106b";
+import { COURSE_TITLE } from "./firebase-config.js?v=20261106b";
 import {
   esc, renderBlocks, renderExercise, exercisesOf, isAuto, gradeAuto, buildResult, keyText, norm,
   fmtTime, friendlyError, authFormHTML, wireAuthForm, subId, KIND_LABEL, isTeacherChecked, gradeExercise, wireFlashcards, isManual,
   isCorrect, readInput, doneMap, isTranslation, exerciseNumbers, fmtDate, todayISO, answerLabel, r2,
-} from "./common.js?v=20261101b";
-import { initShell, renderUnitNav, wireUnitNav } from "./shell.js?v=20261101b";
-import { loadVocab, grammarCheck, vocabProfile, unitVocabulary, feedbackHTML, sleep } from "./writing.js?v=20261101b";
-import "./speaking.js?v=20261101b";
-import { isWritingTask, measure, METRICS, toCSV } from "./progress.js?v=20261106a";
+} from "./common.js?v=20261106b";
+import { initShell, renderUnitNav, wireUnitNav } from "./shell.js?v=20261106b";
+import { loadVocab, grammarCheck, vocabProfile, unitVocabulary, feedbackHTML, sleep } from "./writing.js?v=20261106b";
+import "./speaking.js?v=20261106b";
+import { isWritingTask, measure, METRICS, toCSV } from "./progress.js?v=20261106b";
 
 const $ = (s) => document.querySelector(s);
 const ls = {
@@ -340,7 +340,7 @@ async function downloadDocx(unitId, ver, btn) {
   try {
     const d = await loadUnitData(unitId);
     if (!d?.content) throw new Error("This unit has no content yet.");
-    const { exportUnitDocx, saveBlob } = await import("./export-docx.js?v=20261101b");
+    const { exportUnitDocx, saveBlob } = await import("./export-docx.js?v=20261106b");
     const teacher = ver === "teacher";
     const sections = d.content.sections.map((s) => ({ ...s, subtitle: (u.sections || []).find((m) => m.id === s.id)?.subtitle || s.subtitle || "" }));
     const blob = await exportUnitDocx({ courseTitle: COURSE_TITLE, unitNum: unitNum(u), unitTitle: u.title, sections,
@@ -1395,7 +1395,8 @@ async function importCourse() {
     await batch.commit();
     for (const l of list) delete T.unitData[l.id];
     T.testsLoaded = false;
-    $("#import-text").value = "";
+    // the page may already have been redrawn by the database update: the field can be gone
+    const ta = $("#import-text"); if (ta) ta.value = "";
     const summary = parts.filter((p) => p.content).map((p, i) => {
       const u = list[parts.indexOf(p)];
       const nEx = p.content.sections.reduce((n, sec) => n + sec.blocks.filter((b) => b.type === "exercise" || b.numbered).length, 0);
