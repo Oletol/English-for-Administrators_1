@@ -564,3 +564,58 @@ i.vb{font-family:var(--sans);font-size:.88em;color:var(--plum);white-space:nowra
 textarea.open-answer.transcript{background:#fbfaf6;cursor:default}
 .sp-line{font-size:12.5px;color:var(--mut);margin:2px 0 6px}
 .sp-line:empty{display:none}
+
+/* ---------------- Speaking / Writing progress (teacher) ---------------- */
+.prog-ctl{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin:6px 0 16px}
+.prog-ctl label{font-size:13px;font-weight:650;color:var(--ink2)}
+.prog-ctl select,.viewas-bar select{font:inherit;font-size:14px;font-weight:500;padding:4px 6px;border:1px solid var(--line);border-radius:7px;background:#fff;margin-left:6px;max-width:330px}
+.prog-h{margin:22px 0 8px}
+.t.prog th .s{display:block;font-weight:500;font-size:11px;color:#e9cfdd;letter-spacing:0;text-transform:none}
+.t.prog td{padding:7px 9px}
+.t.prog td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.t.prog td.nm{white-space:nowrap}
+.t.prog td.up{color:var(--ok);font-weight:700}
+.t.prog td.down{color:var(--bad);font-weight:700}
+.t.prog tfoot td{border-top:2px solid var(--line)}
+.t.prog a{color:inherit;text-decoration:underline dotted;text-underline-offset:3px}
+.t.prog th .all-link{color:#f0c6dd;font-size:10px;margin-left:6px}
+.spark{display:block}
+.prog-chart{margin:4px 0 18px;padding:12px 14px 6px;background:#fff;border:1px solid var(--line);border-radius:var(--r2);max-width:760px}
+.prog-chart svg{width:100%;height:auto;display:block}
+.prog-chart .ax{font-size:11px;fill:var(--mut)}
+.prog-chart .grid{stroke:var(--line2);stroke-width:1}
+.prog-chart polyline.st{fill:none;stroke:#c9bfc6;stroke-width:1.4}
+.prog-chart polyline.st:hover{stroke:var(--gold);stroke-width:2.4}
+.prog-chart polyline.st.one{stroke:var(--teal);stroke-width:2.6}
+.prog-chart circle.one{fill:var(--teal)}
+.prog-chart polyline.mn{fill:none;stroke:var(--plum);stroke-width:3}
+.prog-chart circle.mn{fill:var(--plum)}
+.prog-chart figcaption{font-size:12px;color:var(--mut);margin-top:4px}
+.prog-chart .lg{display:inline-block;width:18px;height:0;border-top:3px solid var(--plum);vertical-align:middle;margin-right:4px}
+.prog-chart .lg.st{border-top:2px solid #c9bfc6}
+.prog-chart .lg.st.one{border-top:3px solid var(--teal)}
+.prog-tasks{font-size:13px;margin:14px 0;padding-left:20px;color:var(--ink2)}
+.prog-tasks li{margin:3px 0}
+.prog-detail .prog-text{white-space:pre-wrap;font-family:var(--serif);font-size:15px;line-height:1.6;background:var(--bg);border-radius:8px;padding:10px 12px;margin:8px 0}
+.prog-facts{display:grid;grid-template-columns:max-content 1fr;gap:4px 14px;font-size:13.5px;margin:10px 0 0}
+.prog-facts dt{color:var(--mut)}
+.prog-facts dd{margin:0}
+.spk-card{margin:14px 0;padding:14px 18px}
+.spk-card b{display:inline;font-family:inherit;font-size:inherit;color:inherit;line-height:inherit}
+.spk-card h3{margin:0 0 6px}
+.spk-t td{vertical-align:top}
+.spk-text td{border-top:0;padding-top:0}
+.spk-text p{white-space:pre-wrap;margin:6px 0 10px;color:var(--ink)}
+.tscroll{overflow-x:auto}
+.stats-t td,.stats-t th{padding:7px 8px}
+
+/* ---------------- whose answers are shown on a unit page (teacher) ---------------- */
+.viewas-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 14px;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r2);background:#fff}
+.viewas-bar label{font-size:13px;font-weight:700;color:var(--ink2)}
+.viewas-bar select{margin-left:0}
+.viewas-bar.on{border-color:var(--teal);background:#eef6f5}
+.prog-set button.on{background:var(--plum);color:#fff}
+.set-tag{display:inline-block;font-size:10px;font-weight:800;letter-spacing:.05em;padding:1px 6px;border-radius:5px;vertical-align:1px;color:#fff;background:var(--mut)}
+.set-tag.class{background:var(--teal)}
+.set-tag.home{background:var(--gold)}
+.spk-card .set-tag,.prog-tasks .set-tag{color:#fff;font-size:10px}
