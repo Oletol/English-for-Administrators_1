@@ -2,8 +2,8 @@
 // Octanove C1–C2, Google 10,000 frequency list as a fallback) and use of the unit's vocabulary.
 // The check runs in the teacher's browser when the teacher clicks the button; the result is
 // saved for each student in exerciseResults and shown under their text.
-import { esc } from "./common.js?v=20261106b";
-import { metricsLine } from "./transcribe.js?v=20261106b";
+import { esc } from "./common.js?v=20261106e";
+import { metricsLine } from "./transcribe.js?v=20261106e";
 
 const LT_URL = "https://api.languagetool.org/v2/check";
 const LT_LANG = "en-GB";
@@ -174,4 +174,12 @@ export function feedbackHTML(fb, { checkedAt } = {}) {
       ${v.offList.length ? `<p class="wfb-line muted">Not in the word lists (names, rare words or misspellings): ${v.offList.map(esc).join(", ")}</p>` : ""}` : ""}
     <p class="wfb-src">Grammar suggestions by <a href="https://languagetool.org" target="_blank">LanguageTool</a> · vocabulary levels from the CEFR-J Wordlist and the Octanove Vocabulary Profile</p>
   </div>`;
+}
+
+// A pair discussion recorded by the partner: the teacher's check copies the text and the feedback into this student's results
+export function pairFeedbackHTML(p, { checkedAt } = {}) {
+  if (!p) return "";
+  const by = esc(p.byName || "your partner");
+  return `<div class="pair-fb"><p class="pair-note"><b>Your pair discussion, recorded by ${by}.</b> ${by} recorded it and turned it into text, so the text is in ${by}&rsquo;s book. `
+    + `Here is a copy with the feedback: it counts for both of you.</p>${feedbackHTML(p, { checkedAt })}</div>`;
 }

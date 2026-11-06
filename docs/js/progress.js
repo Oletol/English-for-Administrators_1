@@ -1,16 +1,13 @@
 // Measures of students' speaking (Whisper transcripts) and writing, for the Progress page of the Teacher's Edition
 // and for the CSV export used in research. Everything is computed in the teacher's browser.
-import { tokens, lemma, vocabProfile } from "./writing.js?v=20261106b";
+import { tokens, lemma, vocabProfile } from "./writing.js?v=20261106e";
 
-// Writing that is followed over time: open exercises marked "track": "writing" in the course file,
-// or one-text exercises in a Writing section / with a letter, essay, report, review or article to write.
+// Writing that is followed over time: every written open exercise the teacher checks ("check": "teacher") –
+// letters and essays, own sentences, translations; "track": "writing" adds an exercise, "track": false leaves it out.
+// Exercises with several items are measured as one text: all the student's answers together.
 export function isWritingTask(ex) {
-  if (ex.kind !== "open" || ex.transcript || ex.graded === false) return false;
-  if (ex.track === "writing") return true;
-  if (ex.track === false) return false;
-  const answerable = (ex.items || []).filter((it) => !it.plain);
-  if (answerable.length !== 1) return false;
-  return /writing/i.test(ex.sectionTitle || "") || /letter|essay|report|review|article|proposal|write your/i.test(ex.title || "");
+  if (ex.kind !== "open" || ex.transcript || ex.graded === false || ex.track === false) return false;
+  return ex.track === "writing" || ex.check === "teacher";
 }
 
 // Subordinating words: a simple, transparent index of syntactic complexity
@@ -42,7 +39,8 @@ export function measure(text, V, phrases, fb, sp) {
   const lemmas = toks.map((t) => lemma(t, V.levels));
   const words = prof.words;
   const leveled = Object.values(prof.counts).reduce((a, b) => a + b, 0) || 1;
-  const sentences = Math.max(1, (text.match(/[^.!?]+[.!?]+/g) || [text]).filter((s) => s.trim()).length);
+  // sentences end with . ! ? or a line break (the answers of a several-item exercise are joined by line breaks)
+  const sentences = Math.max(1, text.split(/[.!?]+|\n+/).filter((x) => /[A-Za-z]/.test(x)).length);
   const sub = toks.filter((t) => SUBORD.has(t)).length;
   // the check counts only if it was made on this very text
   const fresh = !!fb && !fb.grammarError && String(fb.text || "").trim() === text.trim();
@@ -88,7 +86,7 @@ export const METRICS = [
   { id: "sentLen", label: "Words per sentence", dir: 1, skill: "writing" },
 ];
 
-export const CSV_COLS = ["code", "student", "group", "skill", "unit", "task_no", "exercise", "task_title", "setting", "pair", "partner", "date", "submitted",
+export const CSV_COLS = ["code", "student", "group", "skill", "unit", "task_no", "exercise", "task_title", "setting", "pair", "partner", "recorded_by", "date", "submitted",
   "words", "speech_s", "recording_s", "wpm", "pauses", "pauses_per_min", "longest_pause_s", "ttr", "mattr50", "b2plus_pct", "c1plus_pct",
   "phrases", "phrase_list", "words_per_sentence", "subordinators_per100", "lt_checked", "lt_issues_all", "lt_grammar", "errors_per100", "text", "text_at_check"];
 

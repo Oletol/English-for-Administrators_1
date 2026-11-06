@@ -1,6 +1,6 @@
 // Общие функции: отрисовка упражнений, автопроверка, подсчёт баллов.
 // Используются и студенческой, и преподавательской страницей.
-import { metricsLine } from "./transcribe.js?v=20261106b";
+import { metricsLine } from "./transcribe.js?v=20261106e";
 
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -295,6 +295,14 @@ export function renderExercise(ex, o = {}) {
       if (tr) { try { spLine = o.speech ? metricsLine(JSON.parse(o.speech)) : ""; } catch {} }
       const extra = tr ? `<input type="hidden" data-ex="_speech" data-item="${esc(ex.id)}" value="${esc(o.speech || "")}" ${dis}><div class="sp-line" data-sp-line="${esc(ex.id)}">${esc(spLine)}</div>` : "";
       const ph = o.readOnly ? "" : tr ? "Record your answer above and click Transcribe: the text will appear here." : "Type your answer here…";
+      // the partner in a pair discussion: chosen from the students of the group (the value is the student's id)
+      if (ex.pair && it.plain && Array.isArray(o.roster)) {
+        const known = o.roster.some((p) => p.uid === val);
+        const optsP = o.roster.map((p) => `<option value="${esc(p.uid)}" ${p.uid === val ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+        body = `${it.text}<select class="gap partner-sel" ${attrs}><option value="">choose your partner…</option>${optsP}`
+          + `${val && !known ? `<option value="${esc(val)}" selected>${esc(val)}</option>` : ""}</select>${o.itemExtra ? o.itemExtra(it.id) : ""}`;
+        return `<li>${body}</li>`;
+      }
       body = `${it.text}${model}<textarea class="open-answer ${tr ? "transcript" : ""}" rows="${it.rows || 5}" ${attrs} ${tr ? "readonly" : ""} ${NOAUTO} placeholder="${ph}">${esc(val)}</textarea>${extra}${wc}${o.itemExtra ? o.itemExtra(it.id) : ""}${grade}`;
     }
     return `<li${play ? ' class="has-play"' : ""}>${play}${play ? `<div class="li-body">${body}</div>` : body}</li>`;

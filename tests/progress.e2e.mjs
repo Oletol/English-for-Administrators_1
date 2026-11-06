@@ -55,8 +55,14 @@ await t.evaluate(() => {
       } };
     db[`submissions/u2__${uid}`] = { uid, groupId: gid, unitId: "u2", status: "draft", updatedAt: day(28),
       answers: { w9: { 1: "In my opinion time management is a skill which every civil servant needs, because the workload is heavy and deadlines are strict. ".repeat(1 + Math.round(q * 2)) },
+        w8: { 1: "I always put off the most difficult tasks until the last minute.", 2: "If you miss the deadline, you will get a lower mark.", 3: "How long does it take you to get to university?" },
         _speech: { w9: JSON.stringify({ speech: 60, total: 75, wpm: Math.round(100 + 50 * q), pauses: Math.round(6 - 4 * q), longest: 2, at: Date.parse("2026-10-28T10:00:00Z") }) } } };
   }
+  // the writing check of a translation (three items) for Anna: two issues in total
+  db["exerciseResults/u2__S1"] = { uid: "S1", groupId: gid, unitId: "u2", feedback: { w8: {
+    1: { text: "I always put off the most difficult tasks until the last minute.", issues: [{ type: "grammar", category: "Grammar" }] },
+    2: { text: "If you miss the deadline, you will get a lower mark.", issues: [] },
+    3: { text: "How long does it take you to get to university?", issues: [{ type: "grammar", category: "Grammar" }] } } } };
   localStorage.setItem("mock:db", JSON.stringify(db));
 });
 await t.reload(); await t.waitForSelector("#tool-nav .sb-item");
@@ -68,6 +74,15 @@ const wtxt = await t.textContent("#view");
 assert.match(wtxt, /Writing progress/); assert.match(wtxt, /Anna Ivanova/); assert.match(wtxt, /In class and at home/);
 assert.ok(await t.locator(".prog-chart svg").count(), "chart");
 assert.equal(await t.locator(".spk-card").count(), 3, "a card for each student");
+assert.match(wtxt, /Translate into English/, "translations are on the Writing progress page");
+assert.match(wtxt, /translation/);
+await t.selectOption("#prog-kind", "translation");
+await t.waitForTimeout(200);
+assert.match(await t.textContent(".t.prog tbody"), /Anna Ivanova/);
+assert.ok(!(await t.textContent(".prog-tasks")).includes("Write your letter"), "only translations");
+await t.screenshot({ path: SHOTS + "/1b-translations.png", fullPage: true });
+await t.selectOption("#prog-kind", "");
+await t.waitForTimeout(200);
 await t.screenshot({ path: SHOTS + "/1-writing.png", fullPage: true });
 await t.selectOption("#prog-student", { label: "Boris Petrov" });
 await t.waitForSelector(".prog-chart .st.one");
@@ -86,6 +101,35 @@ await t.waitForTimeout(200);
 await t.click(".t.prog tbody a[data-act=prog-open]");
 await t.waitForSelector("#prog-detail");
 await t.screenshot({ path: SHOTS + "/3-speaking.png", fullPage: true });
+
+step("Pair discussions: matching the partner, copies, feedback for the partner");
+const ptxt = await t.textContent("#view");
+assert.match(ptxt, /Pair discussions: who was the partner\?/);
+assert.match(ptxt, /1 not matched/, "Boris typed his own name");
+await t.selectOption("#prog-student", { label: "Boris Petrov" });
+await t.waitForTimeout(200);
+assert.match(await t.textContent(".spk-card"), /recorded by Anna Ivanova|recorded by Vera Smirnova/, "Boris has the copy of the pair recording");
+await t.selectOption("#prog-student", "");
+await t.waitForTimeout(200);
+// the teacher says that Boris recorded the discussion with Vera
+await t.selectOption('.pair-sel[data-pair="u1|s6|S2"]', "S3");
+await t.waitForSelector("text=1 not matched", { state: "detached" });
+assert.match(await t.textContent(".pair-box summary"), /all matched/);
+await t.screenshot({ path: SHOTS + "/3b-pairs.png", fullPage: true });
+// the writing check of 1.6.5 sends the partner a copy of the text and the feedback
+await t.evaluate(() => { location.hash = "#u1/speaking"; });
+await t.waitForSelector('[data-act="check-writing"][data-ex="s6"]');
+await t.click('[data-act="check-writing"][data-ex="s6"]');
+await t.waitForSelector("text=sent to partners", { timeout: 30000 });
+const fbS2 = await t.evaluate(() => JSON.parse(localStorage.getItem("mock:db"))["exerciseResults/u1__S2"]);
+assert.ok(fbS2?.feedback?.s6?._pair?.text, "Boris got the copy");
+assert.ok(fbS2.feedback.s6["1"], "and his own feedback is kept");
+await t.selectOption("#view-as", "S2");
+await t.waitForSelector("#ex-s6 .pair-fb");
+await t.locator("#ex-s6").screenshot({ path: SHOTS + "/3c-pair-copy.png" });
+await t.click(".viewas-bar [data-act=view-as]:has-text('Back to my practice')");
+await t.click('a[href="#tools/speaking"]');
+await t.waitForSelector(".t.prog");
 
 step("Analytics with drafts");
 await t.click('a[href="#tools/stats"]');

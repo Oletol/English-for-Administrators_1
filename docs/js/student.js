@@ -4,15 +4,15 @@ import {
   auth, db, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
   sendPasswordResetEmail, signOut, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, orderBy,
   serverTimestamp,
-} from "./fb.js?v=20261106b";
-import { COURSE_TITLE } from "./firebase-config.js?v=20261106b";
+} from "./fb.js?v=20261106e";
+import { COURSE_TITLE } from "./firebase-config.js?v=20261106e";
 import {
   esc, renderBlocks, readInput, fmtTime, friendlyError, authFormHTML, wireAuthForm, subId, exercisesOf, isAuto,
   isTeacherChecked, wireFlashcards, countWords, DONE, doneMap, exerciseNumbers, planTag,
-} from "./common.js?v=20261106b";
-import { initShell, renderUnitNav, wireUnitNav } from "./shell.js?v=20261106b";
-import { feedbackHTML } from "./writing.js?v=20261106b";
-import "./speaking.js?v=20261106b";
+} from "./common.js?v=20261106e";
+import { initShell, renderUnitNav, wireUnitNav } from "./shell.js?v=20261106e";
+import { feedbackHTML, pairFeedbackHTML } from "./writing.js?v=20261106e";
+import "./speaking.js?v=20261106e";
 
 const $ = (s) => document.querySelector(s);
 const S = {
@@ -262,7 +262,7 @@ function renderMain() {
   const relEx = S.group.releasedEx?.[unit.id] || [];
   const done = doneMap(sub.answers);
   const plan = S.group.plan?.[unit.id] || {};
-  const viewKey = `${unit.id}/${sec.id}/${readOnly}/${!!res}/${relEx.join(",")}/${(S.group.feedbackEx?.[unit.id] || []).join(",")}/${S.exrVer}/${stableJSON(done)}/${stableJSON(plan)}`;
+  const viewKey = `${unit.id}/${sec.id}/${readOnly}/${!!res}/${relEx.join(",")}/${(S.group.feedbackEx?.[unit.id] || []).join(",")}/${S.exrVer}/${stableJSON(done)}/${stableJSON(plan)}/${(S.group.roster || []).map((p) => p.uid).join(",")}`;
 
   // do not re-render while the student is typing (keeps the cursor in place)
   const active = document.activeElement;
@@ -288,11 +288,14 @@ function renderMain() {
         itemExtra: fb ? (itemId) => feedbackHTML(fb[itemId], { checkedAt: fmtTime(fbAt) }) : null,
         answers: sub.answers?.[ex.id] || {},
         speech: sub.answers?._speech?.[ex.id],
+        // the classmates for the partner list of a pair discussion (names only, kept by the Teacher's Edition in the group)
+        roster: ex.pair ? (S.group.roster || []).filter((p) => p.uid !== S.user?.uid) : undefined,
         readOnly: readOnly || exDone || isDone,
         headExtra: planTag(plan[ex.id]),
         factor,
         cls: isDone || exDone ? "is-done" : "",
-        after: readOnly || exDone ? "" : doneFootHTML(ex, isDone, sub.answers?.[ex.id]),
+        // a pair discussion that the partner recorded: the teacher's check put a copy of the text and the feedback here
+        after: (ex.pair && fb?._pair ? pairFeedbackHTML(fb._pair, { checkedAt: fmtTime(fbAt) }) : "") + (readOnly || exDone ? "" : doneFootHTML(ex, isDone, sub.answers?.[ex.id])),
         auto: res ? (isAuto(ex) ? res.auto?.[ex.id] || {} : null) : exDone ? S.exr[unit.id]?.items?.[ex.id] || {} : undefined,
         manual: res?.manual?.[ex.id],
         showPending: !!res,

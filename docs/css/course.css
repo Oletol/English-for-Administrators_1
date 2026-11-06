@@ -619,3 +619,8 @@ textarea.open-answer.transcript{background:#fbfaf6;cursor:default}
 .set-tag.class{background:var(--teal)}
 .set-tag.home{background:var(--gold)}
 .spk-card .set-tag,.prog-tasks .set-tag{color:#fff;font-size:10px}
+
+/* a pair discussion recorded by the partner: the copy of the text and the feedback */
+.pair-fb{margin:10px 18px 14px;padding:10px 14px;border:1px dashed var(--teal);border-radius:var(--r2);background:#f4faf9}
+.pair-fb .pair-note{margin:0 0 6px;font-size:13.5px;color:var(--ink2)}
+.pair-sel{font:inherit;font-size:13.5px;padding:3px 6px;border:1px solid var(--line);border-radius:7px;background:#fff;max-width:260px}
